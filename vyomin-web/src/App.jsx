@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { RadarView } from './components/RadarView';
 import { GraphView } from './components/GraphView';
-import { LoginView } from './components/LoginView';
 
 function App() {
   const [activeTab, setActiveTab] = useState('radar');
@@ -28,12 +27,6 @@ function App() {
           >
             Intelligence Graph
           </button>
-          <button 
-            onClick={() => setActiveTab('login')}
-            className={`w-full text-left px-4 py-3 rounded-md transition-colors ${activeTab === 'login' ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50' : 'hover:bg-slate-800 text-slate-400'}`}
-          >
-            Access Terminal
-          </button>
         </div>
         
         <div className="p-4 border-t border-slate-800 text-xs text-slate-600 text-center">
@@ -45,7 +38,6 @@ function App() {
       <main className="flex-grow p-6 overflow-hidden">
         {activeTab === 'radar' && <RadarView />}
         {activeTab === 'graph' && <GraphView />}
-        {activeTab === 'login' && <LoginView />}
       </main>
     </div>
   );

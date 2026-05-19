@@ -1,10 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { useAuthStore } from '../store/authStore';
 
 export const GraphView = () => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
-  const token = useAuthStore((state) => state.token);
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
@@ -22,7 +20,6 @@ export const GraphView = () => {
       try {
         const response = await fetch('/api/intel/risk-path/defaultUser', {
           headers: {
-            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         });
@@ -36,10 +33,8 @@ export const GraphView = () => {
       }
     };
 
-    if (token) {
-      fetchGraphData();
-    }
-  }, [token]);
+    fetchGraphData();
+  }, []);
 
   return (
     <div className="flex flex-col h-full bg-slate-900 rounded-lg shadow-lg border border-slate-700 p-6 overflow-hidden">
@@ -74,7 +69,7 @@ export const GraphView = () => {
           />
         ) : (
           <div className="flex h-full items-center justify-center text-slate-500">
-            {token ? "Awaiting Data Ingestion..." : "Please authenticate in the Access Terminal to view intelligence."}
+            Awaiting Data Ingestion...
           </div>
         )}
       </div>

@@ -3,8 +3,8 @@ spring:
     name: core-api
   datasource:
     url: jdbc:postgresql://postgres:5432/vyomin_db
-    username: vyomin_admin
-    password: vyomin_password
+    username: ${POSTGRES_USER:vyomin_admin}
+    password: ${POSTGRES_PASSWORD:password}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -16,7 +16,7 @@ spring:
     uri: bolt://neo4j:7687
     authentication:
       username: neo4j
-      password: vyomin_graph_pass
+      password: ${NEO4J_PASSWORD:password}
   data:
     redis:
       host: redis
@@ -26,6 +26,11 @@ api:
     key: ${FINNHUB_API_KEY}
   opensanctions:
     key: ${OPENSANCTIONS_API_KEY}
+  opennetwork:
+    clientId: ${Open_Network_clientId}
+    clientSecret: ${Open_Network_clientSecret}
+    tokenUrl: ${Open_Network_token_url}
+    dataUrl: ${Open_Network_data_url}
 app:
   admin:
     email: ${DEFAULT_ADMIN_EMAIL}
