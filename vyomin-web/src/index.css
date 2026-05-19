@@ -1,0 +1,13 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+@theme {
+  --color-primary: #10b981;
+}
+
+body {
+  background-color: #0f172a;
+  color: #f8fafc;
+  margin: 0;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}

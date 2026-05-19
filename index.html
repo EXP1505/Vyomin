@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Flight Telemetry WebSocket Test</title>
+    <!-- Include SockJS and Stomp.js -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@5.0.0/bundles/stomp.umd.min.js"></script>
+</head>
+<body>
+    <h2>Live Flight Telemetry</h2>
+    <div id="messages" style="font-family: monospace; white-space: pre-wrap; background: #eee; padding: 10px; border-radius: 5px;">
+        Waiting for telemetry...
+    </div>
+
+    <script>
+        const stompClient = new StompJs.Client({
+            connectHeaders: {},
+            debug: function (str) {
+                console.log(str);
+            },
+            reconnectDelay: 5000,
+            heartbeatIncoming: 4000,
+            heartbeatOutgoing: 4000,
+        });
+
+        // Fallback code using SockJS because we configured withSockJS() in Spring Boot
+        stompClient.webSocketFactory = function () {
+            return new SockJS('http://localhost:8080/ws-telemetry');
+        };
+
+        stompClient.onConnect = function (frame) {
+            console.log('Connected: ' + frame);
+            stompClient.subscribe('/topic/flights', function (message) {
+                if (message.body) {
+                    const flights = JSON.parse(message.body);
+                    document.getElementById('messages').innerHTML = JSON.stringify(flights, null, 2);
+                }
+            });
+        };
+
+        stompClient.onStompError = function (frame) {
+            console.error('Broker reported error: ' + frame.headers['message']);
+            console.error('Additional details: ' + frame.body);
+        };
+
+        stompClient.activate();
+    </script>
+</body>
+</html>

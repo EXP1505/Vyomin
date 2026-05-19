@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vyomin Command Center</title>
+    <script>
+      // Polyfill for global object required by some libraries like sockjs-client in Vite
+      if (typeof global === 'undefined') {
+        window.global = window;
+      }
+      
+      // Temporary error catcher to display errors on screen if React fails to mount
+      window.onerror = function(message, source, lineno, colno, error) {
+        document.body.innerHTML += '<div style="color:red; padding: 20px; font-family: monospace; z-index: 9999; position: absolute; top: 0; background: black; width: 100%;">' + message + '<br/>' + (error && error.stack ? error.stack : '') + '</div>';
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
