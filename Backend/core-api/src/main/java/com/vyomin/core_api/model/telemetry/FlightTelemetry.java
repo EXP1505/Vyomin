@@ -20,4 +20,8 @@ public class FlightTelemetry implements Serializable {
     private double altitude;
     private double heading;
     private long timestamp;
+    // classified type: MILITARY, COMMERCIAL, CARGO, PRIVATE, HELICOPTER, DRONE, UNKNOWN
+    private String flightType;
+    private String aircraftModel;
+    private String registration;
 }

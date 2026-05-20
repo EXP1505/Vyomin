@@ -8,8 +8,9 @@ export const useTelemetrySocket = () => {
   const clientRef = useRef(null);
 
   useEffect(() => {
+    const wsUrl = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
     const client = new Client({
-      webSocketFactory: () => new SockJS('http://localhost:8080/ws-telemetry'),
+      webSocketFactory: () => new SockJS(wsUrl),
       debug: (str) => {
         // console.log(str);
       },

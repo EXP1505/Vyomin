@@ -36,6 +36,9 @@ services:
       - redis
     env_file:
       - ./Backend/core-api/.env
+    environment:
+      - POSTGRES_URL=${DOCKER_POSTGRES_URL}
+      - NEO4J_URI=${DOCKER_NEO4J_URI}
     restart: unless-stopped
 
   vyomin-web:
