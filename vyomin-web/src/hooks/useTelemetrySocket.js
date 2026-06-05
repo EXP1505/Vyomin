@@ -11,7 +11,7 @@ export const useTelemetrySocket = () => {
     const wsUrl = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
     const client = new Client({
       webSocketFactory: () => new SockJS(wsUrl),
-      debug: (str) => {
+      debug: () => {
         // console.log(str);
       },
       reconnectDelay: 5000,

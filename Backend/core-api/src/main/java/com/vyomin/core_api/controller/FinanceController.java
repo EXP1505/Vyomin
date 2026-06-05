@@ -1,0 +1,49 @@
+package com.vyomin.core_api.controller;
+
+import com.vyomin.core_api.service.FinanceService;
+import com.vyomin.core_api.service.FinanceService.StockQuote;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/intel/finance")
+@RequiredArgsConstructor
+public class FinanceController {
+
+    private final FinanceService financeService;
+
+    @GetMapping("/trending")
+    public ResponseEntity<?> trending() {
+        try {
+            List<String> symbols = financeService.getTrendingSymbols();
+            List<StockQuote> quotes = symbols.stream()
+                    .map(financeService::quoteForSymbol)
+                    .toList();
+
+            return ResponseEntity.ok(Map.of("type", "trending", "data", quotes));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<?> search(@RequestParam("symbol") String symbol) {
+        try {
+            StockQuote quote = financeService.quoteForSymbol(symbol);
+            return ResponseEntity.ok(Map.of("type", "search", "data", quote));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+}
+

@@ -23,7 +23,7 @@ spring:
       port: 6379
 api:
   finnhub:
-    key: ${FINNHUB_API_KEY}
+    key: ${FINNHUB_API_KEY:}
   opensanctions:
     key: ${OPENSANCTIONS_API_KEY}
   opennetwork:

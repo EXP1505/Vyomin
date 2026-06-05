@@ -4,6 +4,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
@@ -12,8 +13,16 @@ import java.util.Date;
 @Component
 public class JwtUtil {
 
-    // Generate a secure key for HS256
-    private final Key key = Keys.secretKeyFor(SignatureAlgorithm.HS256);
+    // Stable signing key loaded from configuration (never hardcode in code)
+    // Expected to be at least 32 bytes when UTF-8 encoded.
+    @Value("${app.jwt.secret:CHANGE_ME_IN_ENVIRONMENT}")
+    private String jwtSecret;
+
+
+    private Key getKey() {
+        return Keys.hmacShaKeyFor(jwtSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private final long EXPIRATION_TIME = 86400000; // 24 hours
 
     public String generateToken(String email) {
@@ -21,7 +30,8 @@ public class JwtUtil {
                 .setSubject(email)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(key)
+                .signWith(getKey())
+
                 .compact();
     }
 
@@ -40,7 +50,8 @@ public class JwtUtil {
 
     private Claims getClaims(String token) {
         return Jwts.parserBuilder()
-                .setSigningKey(key)
+                .setSigningKey(getKey())
+
                 .build()
                 .parseClaimsJws(token)
                 .getBody();
