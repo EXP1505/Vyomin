@@ -1,5 +1,8 @@
 package com.vyomin.core_api.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vyomin.core_api.service.FinanceService;
 import com.vyomin.core_api.service.FinanceService.StockQuote;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +19,7 @@ import java.util.Map;
 public class FinanceController {
 
     private final FinanceService financeService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @GetMapping("/trending")
     public ResponseEntity<?> trending() {
@@ -24,7 +28,6 @@ public class FinanceController {
             List<StockQuote> quotes = symbols.stream()
                     .map(financeService::quoteForSymbol)
                     .toList();
-
             return ResponseEntity.ok(Map.of("type", "trending", "data", quotes));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
@@ -45,5 +48,55 @@ public class FinanceController {
                     .body(Map.of("error", e.getMessage()));
         }
     }
-}
 
+    @GetMapping("/profile")
+    public ResponseEntity<?> profile(@RequestParam("symbol") String symbol) {
+        try {
+            JsonNode profile = financeService.profileForSymbol(symbol);
+            ObjectNode res = objectMapper.createObjectNode();
+            res.put("type", "profile");
+            res.set("data", profile);
+            return ResponseEntity.ok(res);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/candles")
+    public ResponseEntity<?> candles(@RequestParam("symbol") String symbol) {
+        try {
+            JsonNode candles = financeService.candlesForSymbol(symbol);
+            ObjectNode res = objectMapper.createObjectNode();
+            res.put("type", "candles");
+            res.set("data", candles);
+            return ResponseEntity.ok(res);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/news")
+    public ResponseEntity<?> news(@RequestParam("symbol") String symbol) {
+        try {
+            JsonNode news = financeService.newsForSymbol(symbol);
+            ObjectNode res = objectMapper.createObjectNode();
+            res.put("type", "news");
+            res.set("data", news);
+            return ResponseEntity.ok(res);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
+import StockDetailModal from './StockDetailModal';
 
 export const FinanceDashboard = ({ fullPage = false }) => {
   const token = useAuthStore((s) => s.token);
@@ -7,6 +8,8 @@ export const FinanceDashboard = ({ fullPage = false }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState([]);
+  const [selectedSymbol, setSelectedSymbol] = useState(null);
+
 
   const authHeaders = useMemo(() => {
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -105,10 +108,11 @@ export const FinanceDashboard = ({ fullPage = false }) => {
   };
 
   return (
-    <aside className={fullPage ? "h-full w-full bg-slate-900" : "h-full w-[420px] max-w-[85vw] bg-slate-900 border-l border-slate-700"}>
-      <div className="h-full flex flex-col">
-        <div className="p-5 border-b border-slate-700">
-          <div className="flex items-center justify-between">
+    <>
+      <aside className={fullPage ? "h-full w-full bg-slate-900" : "h-full w-[420px] max-w-[85vw] bg-slate-900 border-l border-slate-700"}>
+        <div className="h-full flex flex-col">
+          <div className="p-5 border-b border-slate-700">
+            <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-emerald-400">Financial Telemetry</h2>
             <div className="text-xs text-slate-500">Finnhub Quotes</div>
           </div>
@@ -145,9 +149,11 @@ export const FinanceDashboard = ({ fullPage = false }) => {
               const colorClass = positive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800/50' : 'text-red-400 bg-red-900/30 border-red-800/50';
 
               return (
-                <div
+                <button
                   key={q.symbol}
-                  className="bg-slate-950 border border-slate-800 rounded-lg p-4 flex items-center justify-between gap-3"
+                  type="button"
+                  onClick={() => setSelectedSymbol(q.symbol)}
+                  className="bg-slate-950 border border-slate-800 rounded-lg p-4 flex items-center justify-between gap-3 text-left hover:border-emerald-500/30 hover:bg-slate-900 transition-colors"
                 >
                   <div>
                     <div className="text-white font-bold tracking-wide">{q.symbol}</div>
@@ -158,7 +164,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
                   >
                     {formatPercent(q.percentChange)}
                   </div>
-                </div>
+                </button>
               );
             })}
 
@@ -166,9 +172,16 @@ export const FinanceDashboard = ({ fullPage = false }) => {
               <div className="text-slate-500 text-sm">No quote data.</div>
             )}
           </div>
+
         </div>
       </div>
-    </aside>
+      </aside>
+
+      {selectedSymbol ? (
+        <StockDetailModal symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} />
+      ) : null}
+    </>
   );
 };
+
 
