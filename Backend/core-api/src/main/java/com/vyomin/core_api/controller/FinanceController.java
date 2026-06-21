@@ -50,53 +50,59 @@ public class FinanceController {
     }
 
     @GetMapping("/profile")
-    public ResponseEntity<?> profile(@RequestParam("symbol") String symbol) {
+    public ResponseEntity<String> profile(@RequestParam("symbol") String symbol) {
         try {
             JsonNode profile = financeService.profileForSymbol(symbol);
             ObjectNode res = objectMapper.createObjectNode();
             res.put("type", "profile");
             res.set("data", profile);
-            return ResponseEntity.ok(res);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(res));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         }
     }
 
     @GetMapping("/candles")
-    public ResponseEntity<?> candles(@RequestParam("symbol") String symbol) {
+    public ResponseEntity<String> candles(@RequestParam("symbol") String symbol) {
         try {
             JsonNode candles = financeService.candlesForSymbol(symbol);
             ObjectNode res = objectMapper.createObjectNode();
             res.put("type", "candles");
             res.set("data", candles);
-            return ResponseEntity.ok(res);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(res));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         }
     }
 
     @GetMapping("/news")
-    public ResponseEntity<?> news(@RequestParam("symbol") String symbol) {
+    public ResponseEntity<String> news(@RequestParam("symbol") String symbol) {
         try {
             JsonNode news = financeService.newsForSymbol(symbol);
             ObjectNode res = objectMapper.createObjectNode();
             res.put("type", "news");
             res.set("data", news);
-            return ResponseEntity.ok(res);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(res));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(Map.of("error", e.getMessage()));
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
         }
     }
 }
