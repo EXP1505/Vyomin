@@ -1,60 +1,185 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  ResponsiveContainer,
-  ComposedChart,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Bar,
-} from 'recharts';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 
 const formatEpochSeconds = (epochSeconds) => {
+
   if (typeof epochSeconds !== 'number' || Number.isNaN(epochSeconds)) return '—';
   return new Date(epochSeconds * 1000).toLocaleString();
 };
 
-const CandlestickBar = (props) => {
-  const { x, width, payload } = props;
-  if (!payload || !width) return null;
 
-  const { open, close, high, low } = payload;
-  if ([open, close, high, low].some(v => v == null)) return null;
-
-  const bullish = close >= open;
-  const color = bullish ? '#34d399' : '#f87171';
-
-  const yScale = props.yAxisMap?.[0]?.scale ?? props.yAxisMap?.['0']?.scale;
-  if (!yScale) return null;
-
-  const xCenter = x + width / 2;
-  const bodyW = Math.max(3, width * 0.6);
-  const bodyX = xCenter - bodyW / 2;
-
-  const yHigh = yScale(high);
-  const yLow = yScale(low);
-  const yOpen = yScale(open);
-  const yClose = yScale(close);
-
-  const bodyTop = Math.min(yOpen, yClose);
-  const bodyBottom = Math.max(yOpen, yClose);
-  const bodyH = Math.max(1, bodyBottom - bodyTop);
-
-  return (
-    <g>
-      <line x1={xCenter} x2={xCenter} y1={yHigh} y2={bodyTop} stroke={color} strokeWidth={1.5} />
-      <line x1={xCenter} x2={xCenter} y1={bodyBottom} y2={yLow} stroke={color} strokeWidth={1.5} />
-      <rect x={bodyX} y={bodyTop} width={bodyW} height={bodyH} fill={color} stroke={color} strokeWidth={0.5} />
-    </g>
-  );
-};
 
 const SkeletonLine = ({ className = '' }) => (
   <div className={`h-3 bg-slate-800/70 rounded animate-pulse ${className}`} />
 );
 
+function CandlestickSvgChart({ chartData }) {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [hover, setHover] = useState({ idx: null, x: 0, y: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      setSize({ width: cr.width, height: cr.height });
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const W = size.width;
+  const H = size.height;
+
+  const padding = { top: 12, right: 14, bottom: 28, left: 70 };
+  const innerW = Math.max(0, W - padding.left - padding.right);
+  const innerH = Math.max(0, H - padding.top - padding.bottom);
+
+  const candles = useMemo(() => (Array.isArray(chartData) ? chartData : []), [chartData]);
+
+  const { minY, maxY } = useMemo(() => {
+    if (!candles.length) return { minY: 0, maxY: 1 };
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of candles) {
+      const l = c?.low;
+      const h = c?.high;
+      if (l != null && l < min) min = l;
+      if (h != null && h > max) max = h;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+      return { minY: min || 0, maxY: (max || min || 1) + 1 };
+    }
+    return { minY: min * 0.998, maxY: max * 1.002 };
+  }, [candles]);
+
+  const yToPx = (v) => {
+    const t = (v - minY) / (maxY - minY);
+    return padding.top + (1 - t) * innerH;
+  };
+
+  const handleMove = (e) => {
+    if (!containerRef.current || !candles.length) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const relX = x - padding.left;
+    const step = innerW / Math.max(1, candles.length);
+    const idx = Math.min(candles.length - 1, Math.max(0, Math.floor(relX / step)));
+    const cx = padding.left + step * (idx + 0.5);
+    const cy = padding.top;
+    setHover({ idx, x: cx, y: cy });
+  };
+
+  const handleLeave = () => setHover({ idx: null, x: 0, y: 0 });
+
+  const bullishColor = '#34d399';
+  const bearishColor = '#f87171';
+
+  const tickCount = 4;
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => {
+    const t = i / tickCount;
+    const v = minY + (maxY - minY) * (1 - t);
+    return { v, y: padding.top + t * innerH };
+  });
+
+  const tooltip = (() => {
+    const idx = hover.idx;
+    if (idx == null || !candles[idx]) return null;
+    const p = candles[idx];
+    const bullish = p.close >= p.open;
+    return {
+      p,
+      bullish,
+    };
+  })();
+
+  const step = innerW / Math.max(1, candles.length);
+  const bodyW = Math.max(3, step * 0.6);
+
+  return (
+    <div ref={containerRef} className="w-full h-full relative" onMouseMove={handleMove} onMouseLeave={handleLeave}>
+      <svg width={W} height={H} className="block">
+        {/* Grid */}
+        {yTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={padding.left} x2={padding.left + innerW} y1={t.y} y2={t.y} stroke="#1e293b" strokeDasharray="3 3" />
+            <text x={padding.left - 10} y={t.y + 3} fill="#64748b" fontSize="10" textAnchor="end">
+              {`$${t.v.toFixed(0)}`}
+            </text>
+          </g>
+        ))}
+
+        {/* Candles */}
+        {candles.map((c, i) => {
+          const xCenter = padding.left + step * (i + 0.5);
+          const wickTop = yToPx(c.high);
+          const wickBottom = yToPx(c.low);
+
+          const bullish = c.close >= c.open;
+          const color = bullish ? bullishColor : bearishColor;
+
+          const yOpen = yToPx(c.open);
+          const yClose = yToPx(c.close);
+          const bodyTop = Math.min(yOpen, yClose);
+          const bodyBottom = Math.max(yOpen, yClose);
+          const bodyH = Math.max(1, bodyBottom - bodyTop);
+          const bodyX = xCenter - bodyW / 2;
+
+          return (
+            <g key={c.ts ?? i}>
+              <line x1={xCenter} x2={xCenter} y1={wickTop} y2={wickBottom} stroke={color} strokeWidth={1.5} />
+              <rect x={bodyX} y={bodyTop} width={bodyW} height={bodyH} fill={color} stroke={color} strokeWidth={0.5} />
+            </g>
+          );
+        })}
+
+        {/* X labels */}
+        {candles.length > 0 &&
+          (() => {
+            const labelEvery = Math.max(1, Math.floor(candles.length / 6));
+            return candles.map((c, i) => {
+              if (i % labelEvery !== 0 && i !== candles.length - 1) return null;
+              const d = new Date(c.ts * 1000);
+              const label = `${d.getMonth() + 1}/${d.getDate()}`;
+              const xCenter = padding.left + step * (i + 0.5);
+              return (
+                <text key={`x-${c.ts ?? i}`} x={xCenter} y={padding.top + innerH + 18} fill="#64748b" fontSize="10" textAnchor="middle">
+                  {label}
+                </text>
+              );
+            });
+          })()}
+      </svg>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="absolute z-20 bg-slate-900 border border-slate-700 text-slate-100 p-3 rounded-lg shadow text-xs"
+          style={{ left: Math.min(W - 240, Math.max(8, hover.x - 120)), top: 10 }}
+        >
+          <div className="text-slate-400 mb-1">{new Date(tooltip.p.ts * 1000).toLocaleDateString()}</div>
+          <div className={tooltip.bullish ? 'text-emerald-400' : 'text-red-400'}>
+            {tooltip.bullish ? '▲ Bullish' : '▼ Bearish'}
+          </div>
+          <div className="mt-1 space-y-0.5">
+            <div>O: <span className="text-white">${tooltip.p.open?.toFixed(2)}</span></div>
+            <div>H: <span className="text-white">${tooltip.p.high?.toFixed(2)}</span></div>
+            <div>L: <span className="text-white">${tooltip.p.low?.toFixed(2)}</span></div>
+            <div>C: <span className="text-white">${tooltip.p.close?.toFixed(2)}</span></div>
+          </div>
+          <div className="text-slate-500 text-xs mt-2">O = Open, H = High, L = Low, C = Close</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function StockDetailModal({ symbol, onClose }) {
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -213,58 +338,13 @@ export default function StockDetailModal({ symbol, onClose }) {
 
                 {/* Candlestick chart */}
                 <div className="bg-slate-950 border border-slate-800 rounded-lg p-4">
+
                   <div className="text-slate-300 text-sm mb-2">Last 30 trading days</div>
                   <div className="h-[320px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                        <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="ts"
-                          tickFormatter={(v) => {
-                            const d = new Date(v * 1000);
-                            return `${d.getMonth() + 1}/${d.getDate()}`;
-                          }}
-                          minTickGap={25}
-                          tick={{ fill: '#64748b', fontSize: 10 }}
-                        />
-                        <YAxis
-                          tick={{ fill: '#64748b', fontSize: 10 }}
-                          width={70}
-                          tickFormatter={(v) => `$${v.toFixed(0)}`}
-                          domain={([min, max]) => [Math.floor(min * 0.998), Math.ceil(max * 1.002)]}
-                        />
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (!active || !payload?.length) return null;
-                            const p = payload[0]?.payload;
-                            const bullish = p?.close >= p?.open;
-                            return (
-                              <div className="bg-slate-900 border border-slate-700 text-slate-100 p-3 rounded-lg shadow text-xs">
-                                <div className="text-slate-400 mb-1">
-                                  {new Date(p?.ts * 1000).toLocaleDateString()}
-                                </div>
-                                <div className={bullish ? 'text-emerald-400' : 'text-red-400'}>
-                                  {bullish ? '▲ Bullish' : '▼ Bearish'}
-                                </div>
-                                <div className="mt-1 space-y-0.5">
-                                  <div>O: <span className="text-white">${p?.open?.toFixed(2)}</span></div>
-                                  <div>H: <span className="text-white">${p?.high?.toFixed(2)}</span></div>
-                                  <div>L: <span className="text-white">${p?.low?.toFixed(2)}</span></div>
-                                  <div>C: <span className="text-white">${p?.close?.toFixed(2)}</span></div>
-                                </div>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Bar
-                          dataKey="close"
-                          shape={(shapeProps) => <CandlestickBar {...shapeProps} />}
-                          isAnimationActive={false}
-                        />
-                      </ComposedChart>
-                    </ResponsiveContainer>
+                    <CandlestickSvgChart chartData={chartData} />
                   </div>
                 </div>
+
 
                 {/* News */}
                 <div className="bg-slate-950 border border-slate-800 rounded-lg p-4">
