@@ -17,6 +17,7 @@ services:
       - "7687:7687"
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH}
+      NEO4J_server_config_strict__validation_enabled: "false"
     restart: unless-stopped
 
   redis:
