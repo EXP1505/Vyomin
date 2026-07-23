@@ -5,9 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vyomin.core_api.model.graph.Company;
 import com.vyomin.core_api.model.graph.Country;
 import com.vyomin.core_api.model.graph.Event;
-import com.vyomin.core_api.repository.graph.CompanyRepository;
-import com.vyomin.core_api.repository.graph.CountryRepository;
-import com.vyomin.core_api.repository.graph.EventRepository;
+import com.vyomin.core_api.repository.graph.GraphCompanyRepository;
+import com.vyomin.core_api.repository.graph.GraphCountryRepository;
+import com.vyomin.core_api.repository.graph.GraphEventRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,11 +26,11 @@ import java.util.Optional;
 @Slf4j
 public class IntelligenceIngestionService {
     //for all the events happening, its in repo folder
-    private final EventRepository eventRepository;
+    private final GraphEventRepository eventRepository;
     // for all the countries
-    private final CountryRepository countryRepository;
+    private final GraphCountryRepository countryRepository;
     // for all the companies
-    private final CompanyRepository companyRepository;
+    private final GraphCompanyRepository companyRepository;
     //just making a rest client
     private final RestClient restClient = RestClient.create();
     //making an object mapper to parse the json response from the api's

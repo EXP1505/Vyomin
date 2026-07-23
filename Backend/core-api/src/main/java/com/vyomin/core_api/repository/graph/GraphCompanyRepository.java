@@ -9,7 +9,7 @@ import java.util.Optional;
 
 //company entity will have only company name as identifier other details will be stored only in company profile
 
-public interface CompanyRepository extends Neo4jRepository<Company, Long> {
+public interface GraphCompanyRepository extends Neo4jRepository<Company, Long> {
 
     Optional<Company> findByName(String name);
 

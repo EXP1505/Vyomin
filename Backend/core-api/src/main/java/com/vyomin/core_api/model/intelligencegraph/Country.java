@@ -1,4 +1,4 @@
-package com.vyomin.core_api.model.graph;
+package com.vyomin.core_api.model.intelligencegraph;
 
 import org.springframework.data.neo4j.core.schema.Id;
 import org.springframework.data.neo4j.core.schema.Node;
@@ -8,16 +8,14 @@ import lombok.Data;
 import java.util.Set;
 import java.util.HashSet;
 
-@Node("GraphCompany")
+@Node
 @Data
-
-//id is the unique company id i will be getting from finnhub api
-public class Company {
+public class Country {
     @Id @GeneratedValue
     private Long id;
     private String name;
-    private String industry;
+    private String region;
 
-    @Relationship(type = "SUPPLIES_TO", direction = Relationship.Direction.OUTGOING)
-    private Set<Country> suppliedCountries = new HashSet<>();
+    @Relationship(type = "ISSUED_SANCTION_AGAINST", direction = Relationship.Direction.OUTGOING)
+    private Set<Country> sanctionedCountries = new HashSet<>();
 }

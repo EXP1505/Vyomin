@@ -4,6 +4,6 @@ import org.springframework.data.neo4j.repository.Neo4jRepository;
 import java.util.Optional;
 
 
-public interface CountryRepository extends Neo4jRepository<Country, Long> {
+public interface GraphCountryRepository extends Neo4jRepository<Country, Long> {
     Optional<Country> findByName(String name);
 }

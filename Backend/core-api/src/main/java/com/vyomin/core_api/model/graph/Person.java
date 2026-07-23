@@ -8,7 +8,7 @@ import lombok.Data;
 import java.util.Set;
 import java.util.HashSet;
 
-@Node
+@Node("GraphPerson")
 @Data
 
 //this is to find out the people and what shares they own and what companies they supply to, just like what congressman might have its biases

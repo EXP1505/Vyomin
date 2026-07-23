@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.HashSet;
 import java.time.LocalDate;
 
-@Node
+@Node("GraphEvent")
 @Data
 
 //this is basically about the impacts in the outerworld in the form of news and current events, events might be similar so the id is being generated uniquely using @GeneratedValue
