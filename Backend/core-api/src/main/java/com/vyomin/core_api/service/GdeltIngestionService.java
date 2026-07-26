@@ -1,154 +1,192 @@
 package com.vyomin.core_api.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vyomin.core_api.model.intelligencegraph.Conflict;
 import com.vyomin.core_api.model.intelligencegraph.Country;
 import com.vyomin.core_api.repository.intelligencegraph.ConflictRepository;
 import com.vyomin.core_api.repository.intelligencegraph.CountryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
-import org.apache.commons.csv.CSVRecord;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
-import java.io.StringReader;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class GdeltIngestionService {
 
-    private static final String GDELT_DAILY_UPDATES_URL = "http://gdeltproject.org/data/dailyupdates/";
-    private static final DateTimeFormatter GDELT_DAY_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private static final double MIN_SEVERITY = 5.0;
+    private static final String GDELT_DOC_API_URL =
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=(military OR sanction OR war OR embargo)" +
+                    "&mode=artlist&format=json&maxrecords=100";
+    private static final DateTimeFormatter GDELT_SEENDATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    private static final Map<String, EventClassification> KEYWORD_CLASSIFICATION = new LinkedHashMap<>();
+    static {
+        KEYWORD_CLASSIFICATION.put("war", new EventClassification("war", 9));
+        KEYWORD_CLASSIFICATION.put("embargo", new EventClassification("embargo", 7));
+        KEYWORD_CLASSIFICATION.put("sanction", new EventClassification("sanction", 6));
+        KEYWORD_CLASSIFICATION.put("military", new EventClassification("military", 6));
+    }
+    private static final EventClassification DEFAULT_CLASSIFICATION = new EventClassification("other", 5);
+
+    private record EventClassification(String eventType, int severityScore) {
+    }
 
     private final ConflictRepository conflictRepository;
     private final CountryRepository countryRepository;
     private final RestClient restClient = RestClient.create();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
-    public void fetchAndIngestDailyGdelt() {
-        log.info("Starting GDELT daily ingestion...");
-        String csvUrl = resolveLatestCsvUrl();
-        if (csvUrl == null) {
-            log.error("Could not resolve a GDELT daily CSV URL, aborting ingestion.");
-            return;
-        }
+    public Map<String, Object> fetchAndIngestDailyGdelt() {
+        log.info("Calling GDELT v2 doc API: {}", GDELT_DOC_API_URL);
 
-        String csvBody = downloadCsv(csvUrl);
-        if (csvBody == null || csvBody.isBlank()) {
-            log.error("Downloaded GDELT CSV was empty, aborting ingestion.");
-            return;
-        }
-
-        int ingested = 0;
-        int skipped = 0;
-        int errors = 0;
-
-        try (CSVParser parser = CSVFormat.TDF.parse(new StringReader(csvBody))) {
-            for (CSVRecord record : parser) {
-                try {
-                    if (ingestRecord(record)) {
-                        ingested++;
-                    } else {
-                        skipped++;
-                    }
-                } catch (Exception e) {
-                    errors++;
-                    log.warn("Skipping malformed GDELT row {}: {}", record.getRecordNumber(), e.getMessage());
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to parse GDELT CSV: {}", e.getMessage(), e);
-            return;
-        }
-
-        log.info("GDELT ingestion complete. Ingested: {}, Skipped (dedup/low severity): {}, Errors: {}",
-                ingested, skipped, errors);
-    }
-
-    private String resolveLatestCsvUrl() {
-        String today = LocalDate.now().format(GDELT_DAY_FORMAT);
-        return GDELT_DAILY_UPDATES_URL + today + ".export.CSV";
-    }
-
-    private String downloadCsv(String url) {
+        ResponseEntity<String> response;
         try {
-            return restClient.get()
-                    .uri(url)
+            response = restClient.get()
+                    .uri(GDELT_DOC_API_URL)
                     .retrieve()
-                    .body(String.class);
+                    .toEntity(String.class);
         } catch (Exception e) {
-            log.error("Failed to download GDELT CSV from {}: {}", url, e.getMessage());
+            log.error("Failed to call GDELT API {}: {}", GDELT_DOC_API_URL, e.getMessage(), e);
+            return buildResult("error", 0, 0);
+        }
+
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            log.warn("GDELT API returned {}: {}", response.getStatusCode(), response.getBody());
+            return buildResult("error", 0, 0);
+        }
+
+        String body = response.getBody();
+        if (body == null || body.isBlank()) {
+            log.warn("GDELT API response was empty");
+            return buildResult("error", 0, 0);
+        }
+
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(body);
+        } catch (Exception e) {
+            log.error("Failed to parse GDELT JSON response: {}", e.getMessage(), e);
+            return buildResult("error", 0, 0);
+        }
+
+        JsonNode articles = root.path("articles");
+        if (!articles.isArray()) {
+            log.warn("GDELT response contained no 'articles' array");
+            return buildResult("success", 0, 0);
+        }
+
+        int added = 0;
+        int failed = 0;
+
+        for (JsonNode article : articles) {
+            try {
+                if (ingestArticle(article) != null) {
+                    added++;
+                }
+            } catch (Exception e) {
+                failed++;
+                log.warn("Skipping malformed GDELT article {}: {}", article, e.getMessage());
+            }
+        }
+
+        log.info("GDELT ingestion complete. Added: {}, Failed: {}, Total articles: {}",
+                added, failed, articles.size());
+
+        return buildResult("success", added, failed);
+    }
+
+    private Map<String, Object> buildResult(String status, int added, int failed) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("status", status);
+        result.put("conflictsAdded", added);
+        result.put("failed", failed);
+        return result;
+    }
+
+    private Conflict ingestArticle(JsonNode article) {
+        if (article == null) {
+            log.warn("Skipping null GDELT article");
+            return null;
+        }
+
+        String url = article.hasNonNull("url") ? article.get("url").asText(null) : null;
+        if (url == null || url.isBlank()) {
+            log.warn("Skipping GDELT article with missing url: {}", article);
+            return null;
+        }
+
+        try {
+            if (conflictRepository.findByGdeltEventId(url).isPresent()) {
+                return null;
+            }
+
+            String title = article.hasNonNull("title") ? article.get("title").asText("Unknown") : "Unknown";
+            String sourceCountry = article.hasNonNull("sourcecountry") ? article.get("sourcecountry").asText(null) : null;
+
+            LocalDate eventDate;
+            try {
+                if (!article.hasNonNull("seendate")) {
+                    throw new IllegalArgumentException("missing seendate field");
+                }
+                String dateStr = article.get("seendate").asText().substring(0, 8);
+                eventDate = LocalDate.parse(dateStr, GDELT_SEENDATE_FORMAT);
+            } catch (Exception e) {
+                log.warn("Failed to parse date {} for article {}: {}",
+                        article.path("seendate").asText(null), url, e.getMessage());
+                eventDate = LocalDate.now();
+            }
+
+            EventClassification classification;
+            try {
+                classification = classify(title);
+            } catch (Exception e) {
+                log.warn("Failed to classify article {}: {}", url, e.getMessage());
+                classification = DEFAULT_CLASSIFICATION;
+            }
+
+            Conflict conflict = new Conflict();
+            conflict.setGdeltEventId(url);
+            conflict.setStartDate(eventDate);
+            conflict.setEventType(classification.eventType());
+            conflict.setSeverityScore(classification.severityScore());
+            conflict.setSeverity(String.valueOf(classification.severityScore()));
+            conflict.setDescription(title);
+            conflict.setPrimaryRegion(sourceCountry);
+            conflict.setName(classification.eventType() + " - " + title);
+
+            if (sourceCountry != null && !sourceCountry.isBlank()) {
+                conflict.getInvolvedCountries().add(getOrCreateCountry(sourceCountry));
+            }
+
+            conflictRepository.save(conflict);
+            return conflict;
+        } catch (Exception e) {
+            log.warn("Failed to ingest GDELT article {}: {}", url, e.getMessage(), e);
             return null;
         }
     }
 
-    private boolean ingestRecord(CSVRecord record) {
-        if (record.size() < 25) {
-            throw new IllegalArgumentException("Row has fewer fields than expected: " + record.size());
+    private EventClassification classify(String title) {
+        if (title == null || title.isBlank()) {
+            return DEFAULT_CLASSIFICATION;
         }
-
-        String globalEventId = record.get(0);
-        if (conflictRepository.findByGdeltEventId(globalEventId).isPresent()) {
-            return false;
+        String lower = title.toLowerCase();
+        for (Map.Entry<String, EventClassification> entry : KEYWORD_CLASSIFICATION.entrySet()) {
+            if (lower.contains(entry.getKey())) {
+                return entry.getValue();
+            }
         }
-
-        String day = record.get(1);
-        String actor1Code = record.get(5);
-        String actor2Code = record.get(6);
-        String eventCode = record.get(7);
-        double goldsteinScale = parseDoubleSafe(record.get(11));
-        String actionGeoFullname = record.get(23);
-        String actionGeoCountryCode = record.get(24);
-
-        int severityScore = (int) Math.round((goldsteinScale + 10) / 2.0);
-        if (severityScore < MIN_SEVERITY) {
-            return false;
-        }
-
-        Conflict conflict = new Conflict();
-        conflict.setGdeltEventId(globalEventId);
-        conflict.setStartDate(parseGdeltDay(day));
-        conflict.setEventType(mapEventType(eventCode));
-        conflict.setDescription(buildDescription(actor1Code, actor2Code, eventCode));
-        conflict.setPrimaryRegion(actionGeoFullname);
-        conflict.setSeverityScore(severityScore);
-        conflict.setSeverity(String.valueOf(severityScore));
-        conflict.setName(conflict.getEventType() + " - " + actionGeoFullname);
-
-        if (actionGeoCountryCode != null && !actionGeoCountryCode.isBlank()) {
-            conflict.getInvolvedCountries().add(getOrCreateCountry(actionGeoCountryCode));
-        }
-
-        conflictRepository.save(conflict);
-        return true;
-    }
-
-    private String mapEventType(String eventCode) {
-        if (eventCode == null || eventCode.isBlank()) {
-            return "unknown";
-        }
-        if (eventCode.startsWith("18") || eventCode.startsWith("19") || eventCode.startsWith("20")) {
-            return "war";
-        }
-        if (eventCode.startsWith("01") || eventCode.startsWith("02")) {
-            return "statement";
-        }
-        if (eventCode.contains("sanction") || eventCode.contains("embargo")) {
-            return eventCode.contains("embargo") ? "embargo" : "sanction";
-        }
-        return "other";
-    }
-
-    private String buildDescription(String actor1Code, String actor2Code, String eventCode) {
-        String actor1 = actor1Code == null || actor1Code.isBlank() ? "Unknown Actor" : actor1Code;
-        String actor2 = actor2Code == null || actor2Code.isBlank() ? "Unknown Actor" : actor2Code;
-        return actor1 + " - " + mapEventType(eventCode) + " - " + actor2;
+        return DEFAULT_CLASSIFICATION;
     }
 
     private Country getOrCreateCountry(String countryCode) {
@@ -158,21 +196,5 @@ public class GdeltIngestionService {
             country.setRegion("Unknown");
             return countryRepository.save(country);
         });
-    }
-
-    private double parseDoubleSafe(String value) {
-        try {
-            return Double.parseDouble(value);
-        } catch (Exception e) {
-            return 0.0;
-        }
-    }
-
-    private LocalDate parseGdeltDay(String day) {
-        try {
-            return LocalDate.parse(day, GDELT_DAY_FORMAT);
-        } catch (Exception e) {
-            return LocalDate.now();
-        }
     }
 }

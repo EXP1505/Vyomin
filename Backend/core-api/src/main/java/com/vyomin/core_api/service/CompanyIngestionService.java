@@ -8,7 +8,6 @@ import com.vyomin.core_api.model.intelligencegraph.Sector;
 import com.vyomin.core_api.repository.intelligencegraph.CompanyRepository;
 import com.vyomin.core_api.repository.intelligencegraph.CountryRepository;
 import com.vyomin.core_api.repository.intelligencegraph.SectorRepository;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,29 +48,15 @@ public class CompanyIngestionService {
     private final RestClient restClient = RestClient.create();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${api.finnhub.key}")
+    @Value("${api.finnhub.key:}")
     private String finnhubApiKey;
-
-    @PostConstruct
-    void seedOnFirstRun() {
-        if (companyRepository.count() > 0) {
-            log.info("Company graph already seeded, skipping startup ingestion.");
-            return;
-        }
-        new Thread(() -> {
-            try {
-                Thread.sleep(2000);
-                ingestCompaniesFromFinnhub();
-            } catch (Exception e) {
-                log.error("Startup company seeding failed: {}", e.getMessage(), e);
-            }
-        }).start();
-    }
 
     @Transactional
     public Map<String, Object> ingestCompaniesFromFinnhub() {
         try {
             log.info("Starting Finnhub company ingestion...");
+            log.info("Finnhub API Key loaded: {}", finnhubApiKey != null ? "✓ Present" : "✗ NULL");
+            log.info("Key length: {}", finnhubApiKey != null ? finnhubApiKey.length() : 0);
             int successCount = 0;
             int failureCount = 0;
 
