@@ -120,8 +120,8 @@ public class FlightTelemetryService {
         "WSG",  // VistaJet
         "VJT"   // VistaJet
     );
-    //scheduled to fetch and broadcast real flight data every 10 seconds
-    @Scheduled(fixedRate = 10000)
+    //scheduled to fetch and broadcast real flight data every 5 minutes
+    @Scheduled(fixedRate = 300000)
     public void fetchAndBroadcastFlights() {
         try {
             List<FlightTelemetry> flights = fetchRealFlights();

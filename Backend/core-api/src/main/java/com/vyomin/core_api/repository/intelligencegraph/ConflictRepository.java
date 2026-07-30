@@ -8,4 +8,5 @@ import java.util.Optional;
 public interface ConflictRepository extends Neo4jRepository<Conflict, Long> {
     List<Conflict> findByName(String name);
     Optional<Conflict> findByGdeltEventId(String gdeltEventId);
+    List<Conflict> findByDescriptionContainingIgnoreCase(String description);
 }

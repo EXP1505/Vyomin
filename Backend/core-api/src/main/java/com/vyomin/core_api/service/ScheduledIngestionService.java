@@ -25,7 +25,7 @@ public class ScheduledIngestionService {
         }
 
         try {
-            gdeltIngestionService.fetchAndIngestDailyGdelt();
+            gdeltIngestionService.ingestLatestGdeltEvents();
             log.info("Scheduled GDELT ingestion completed successfully.");
         } catch (Exception e) {
             log.error("Scheduled GDELT ingestion failed: {}", e.getMessage(), e);

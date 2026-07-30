@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { RadarView } from './components/RadarView';
-import { GraphView } from './components/GraphView';
 import { FinanceDashboard } from './components/FinanceDashboard';
+import IntelligenceGraphExplorer from './pages/IntelligenceGraphExplorer';
 
 function App() {
   const [activeTab, setActiveTab] = useState('radar');
@@ -45,7 +45,7 @@ function App() {
       {/* Main */}
       <main className="flex-grow p-6 overflow-hidden h-full">
         {activeTab === 'radar' && <RadarView />}
-        {activeTab === 'graph' && <GraphView />}
+        {activeTab === 'graph' && <IntelligenceGraphExplorer />}
         {activeTab === 'finance' && <FinanceDashboard fullPage />}
       </main>
     </div>

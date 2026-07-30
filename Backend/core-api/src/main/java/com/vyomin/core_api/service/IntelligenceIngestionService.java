@@ -11,6 +11,7 @@ import com.vyomin.core_api.repository.graph.GraphEventRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -99,6 +100,8 @@ public class IntelligenceIngestionService {
                     }
                 }
             }
+        } catch (HttpClientErrorException e) {
+            log.warn("GDELT ingestion failed (rate limited or offline): {}", e.getMessage());
         } catch (Exception e) {
             log.error("Failed to ingest GDELT data", e);
         }
