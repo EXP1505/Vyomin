@@ -6,6 +6,7 @@ import com.vyomin.core_api.repository.intelligencegraph.ConflictRepository;
 import com.vyomin.core_api.repository.intelligencegraph.CountryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -45,12 +47,6 @@ import java.util.zip.ZipInputStream;
 @RequiredArgsConstructor
 @Slf4j
 public class GdeltIngestionService {
-
-    private static final String GDELT_LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
-    private static final String CAMEO_COUNTRY_URL = "http://data.gdeltproject.org/documentation/CAMEO.country.txt";
-    private static final String CAMEO_TYPE_URL = "http://data.gdeltproject.org/documentation/CAMEO.type.txt";
-    private static final String CAMEO_EVENTCODES_URL =
-            "http://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt";
 
     private static final int GDELT_TIMEOUT_MS = 30_000;
     private static final DateTimeFormatter SQLDATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
@@ -115,6 +111,7 @@ public class GdeltIngestionService {
     );
 
     // Column indices in the headerless GDELT 2.0 Events CSV (61 tab-delimited columns).
+    private static final int COL_GLOBALEVENTID = 0;
     private static final int COL_SQLDATE = 1;
     private static final int COL_ACTOR1_NAME = 6;
     private static final int COL_ACTOR1_COUNTRY = 7;
@@ -131,13 +128,35 @@ public class GdeltIngestionService {
     private static final int COL_ACTIONGEO_LONG = 57;
     private static final int MIN_COLUMNS = 58;
 
-    private enum IngestOutcome { INGESTED, DUPLICATE }
-
     private final ConflictRepository conflictRepository;
     private final CountryRepository countryRepository;
     private final RestClient restClient = buildTimeoutBoundRestClient();
 
+    @Value("${gdelt.manifest.url}")
+    private String gdeltManifestUrl;
+
+    @Value("${gdelt.cameo.country.url}")
+    private String cameoCountryUrl;
+
+    @Value("${gdelt.cameo.type.url}")
+    private String cameoTypeUrl;
+
+    @Value("${gdelt.cameo.event.url}")
+    private String cameoEventCodesUrl;
+
+    private static final int SAVE_BATCH_SIZE = 250;
+    // GDELT's own feed only updates every 15 minutes, so an on-demand fetch that lands within
+    // this window of the last completed run has nothing new to find - skip re-downloading and
+    // re-walking the whole batch just to discover that.
+    private static final Duration MIN_RE_INGEST_INTERVAL = Duration.ofMinutes(10);
+
     private final AtomicBoolean lookupsLoaded = new AtomicBoolean(false);
+    // Guards against the scheduled 15-minute ingest and an on-demand search-triggered ingest
+    // overlapping: without this, a search landing mid-cycle used to queue a second full
+    // download+row-by-row-save pass behind (or alongside) the one already running, each row
+    // taking a network round trip to AuraDB, which is what made searches hang for minutes.
+    private final AtomicBoolean ingestionInProgress = new AtomicBoolean(false);
+    private volatile Instant lastCompletedAt;
     private Map<String, String> cameoCountryLookup = Map.of();
     private Map<String, String> cameoTypeLookup = Map.of();
     private Map<String, String> cameoEventCodeLookup = Map.of();
@@ -149,7 +168,11 @@ public class GdeltIngestionService {
         return RestClient.builder().requestFactory(factory).build();
     }
 
-    @Scheduled(fixedRate = 900_000)
+    // Staggered against IntelligenceIngestionService's two scheduled jobs (ingestGdeltNews,
+    // ingestOpenNetworkData) so all three don't fire simultaneously on every app startup/restart -
+    // that pile-up of concurrent Neo4j load is what exhausted the connection pool and made
+    // interactive search requests time out waiting for a free connection.
+    @Scheduled(fixedRate = 900_000, initialDelay = 0)
     public void scheduledIngest() {
         ingestLatestGdeltEvents();
     }
@@ -161,55 +184,122 @@ public class GdeltIngestionService {
      */
     @Transactional
     public Map<String, Object> ingestLatestGdeltEvents() {
-        log.info("Fetching GDELT 2.0 Events...");
-        loadCameoLookupsIfNeeded();
+        Instant lastRun = lastCompletedAt;
+        if (lastRun != null && Duration.between(lastRun, Instant.now()).compareTo(MIN_RE_INGEST_INTERVAL) < 0) {
+            log.info("Skipping GDELT ingest: last completed run was less than {} ago", MIN_RE_INGEST_INTERVAL);
+            return buildResult("skipped-recent", 0, 0, 0);
+        }
+        if (!ingestionInProgress.compareAndSet(false, true)) {
+            log.info("Skipping GDELT ingest: a run is already in progress");
+            return buildResult("skipped-in-progress", 0, 0, 0);
+        }
 
-        List<String> rows;
         try {
-            rows = downloadLatestEventRows();
-        } catch (Exception e) {
-            log.warn("Failed to download GDELT 2.0 Events batch, skipping this cycle: {}", e.getMessage(), e);
-            return buildResult("error", 0, 0, 0);
-        }
+            log.info("Fetching GDELT 2.0 Events...");
+            loadCameoLookupsIfNeeded();
 
-        int totalEvents = rows.size();
-        int filteredIn = 0;
-        int ingested = 0;
-        int duplicates = 0;
-        int failed = 0;
-
-        for (String row : rows) {
-            String[] cols = row.split("\t", -1);
-            if (cols.length < MIN_COLUMNS) {
-                log.warn("Skipping malformed GDELT row (only {} columns): {}", cols.length, row);
-                failed++;
-                continue;
-            }
-
-            String actor1Country = cols[COL_ACTOR1_COUNTRY].trim();
-            String actor2Country = cols[COL_ACTOR2_COUNTRY].trim();
-            if (!WHITELIST_CODE_TO_NAME.containsKey(actor1Country) && !WHITELIST_CODE_TO_NAME.containsKey(actor2Country)) {
-                continue;
-            }
-            filteredIn++;
-
+            List<String> rows;
             try {
-                IngestOutcome outcome = ingestEventRow(cols);
-                if (outcome == IngestOutcome.INGESTED) {
-                    ingested++;
-                } else {
-                    duplicates++;
-                }
+                rows = downloadLatestEventRows();
             } catch (Exception e) {
-                failed++;
-                log.warn("Failed to parse/ingest GDELT event row, skipping. Row: {} | Error: {}", row, e.getMessage());
+                log.warn("Failed to download GDELT 2.0 Events batch, skipping this cycle: {}", e.getMessage(), e);
+                return buildResult("error", 0, 0, 0);
             }
+
+            int totalEvents = rows.size();
+            int failed = 0;
+
+            // Pass 1: cheap in-memory whitelist filter, no DB access yet.
+            List<String[]> whitelisted = new ArrayList<>();
+            for (String row : rows) {
+                String[] cols = row.split("\t", -1);
+                if (cols.length < MIN_COLUMNS) {
+                    log.warn("Skipping malformed GDELT row (only {} columns): {}", cols.length, row);
+                    failed++;
+                    continue;
+                }
+                String actor1Country = cols[COL_ACTOR1_COUNTRY].trim();
+                String actor2Country = cols[COL_ACTOR2_COUNTRY].trim();
+                if (!WHITELIST_CODE_TO_NAME.containsKey(actor1Country) && !WHITELIST_CODE_TO_NAME.containsKey(actor2Country)) {
+                    continue;
+                }
+                whitelisted.add(cols);
+            }
+            int filteredIn = whitelisted.size();
+            log.info("Filtered {} events from {} total (actor whitelist)", filteredIn, totalEvents);
+
+            // Pass 2: one bulk existence check instead of a findByGdeltEventId() round trip per
+            // row - the per-row version was the actual bottleneck even after batching saves,
+            // since AuraDB network latency applies per query regardless of whether it's a read
+            // or a write, and a batch commonly has hundreds of whitelist-matching rows.
+            List<String> dedupeKeys = whitelisted.stream().map(this::buildDedupeKey).toList();
+            Set<String> existingIds = dedupeKeys.isEmpty()
+                    ? Set.of()
+                    : conflictRepository.findByGdeltEventIdIn(dedupeKeys).stream()
+                            .map(Conflict::getGdeltEventId)
+                            .collect(java.util.stream.Collectors.toSet());
+
+            // Pre-warm with every whitelisted country in one round trip so the loop below almost
+            // never has to fall through to a per-name lookup.
+            Map<String, Country> countryCache = new java.util.HashMap<>();
+            countryRepository.findByNameIn(WHITELIST_CODE_TO_NAME.values())
+                    .forEach(c -> countryCache.put(c.getName(), c));
+
+            int duplicates = 0;
+            List<Conflict> pendingBatch = new ArrayList<>(SAVE_BATCH_SIZE);
+
+            for (int i = 0; i < whitelisted.size(); i++) {
+                String[] cols = whitelisted.get(i);
+                String dedupeKey = dedupeKeys.get(i);
+                if (existingIds.contains(dedupeKey)) {
+                    duplicates++;
+                    continue;
+                }
+                try {
+                    pendingBatch.add(parseConflictFromRow(cols, dedupeKey, countryCache));
+                } catch (Exception e) {
+                    failed++;
+                    log.error("Failed to parse conflict from row (eventId={}) | Exception class: {} | Message: {}",
+                            dedupeKey, e.getClass().getName(), e.getMessage(), e);
+                }
+
+                if (pendingBatch.size() >= SAVE_BATCH_SIZE) {
+                    failed += flushBatch(pendingBatch);
+                }
+            }
+            failed += flushBatch(pendingBatch);
+
+            int ingested = filteredIn - duplicates - failed;
+            log.info("Ingestion complete: success={}, failed={}, duplicates={}", ingested, failed, duplicates);
+
+            lastCompletedAt = Instant.now();
+            return buildResult("success", ingested, duplicates, failed);
+        } finally {
+            ingestionInProgress.set(false);
         }
+    }
 
-        log.info("Filtered {} events from {} total (actor whitelist)", filteredIn, totalEvents);
-        log.info("Ingested {} new conflicts, {} duplicates skipped", ingested, duplicates);
-
-        return buildResult("success", ingested, duplicates, failed);
+    /**
+     * Saves a batch of parsed conflicts in one round trip instead of one save() per row - with
+     * AuraDB's network latency, one-at-a-time saves are what turned a several-thousand-row batch
+     * into a many-minutes-long loop. Clears the batch list regardless of outcome so the caller
+     * can keep accumulating. Returns the number of rows that failed to save.
+     */
+    private int flushBatch(List<Conflict> batch) {
+        if (batch.isEmpty()) {
+            return 0;
+        }
+        int size = batch.size();
+        try {
+            conflictRepository.saveAll(batch);
+            log.info("Saved batch of {} conflicts", size);
+            return 0;
+        } catch (Exception e) {
+            log.error("Failed to save batch of {} conflicts: {}", size, e.getMessage(), e);
+            return size;
+        } finally {
+            batch.clear();
+        }
     }
 
     /**
@@ -225,16 +315,25 @@ public class GdeltIngestionService {
         return ingestLatestGdeltEvents();
     }
 
-    private IngestOutcome ingestEventRow(String[] cols) {
+    /**
+     * GDELT's GLOBALEVENTID is the only field guaranteed unique per row. An earlier version of
+     * this key was Actor1Code|Actor2Code|EventCode|SQLDate, which collapses every article that
+     * shares an actor pair/event/day onto the same key - GDELT routinely has many distinct
+     * articles about the same actor pair on the same day, so that key was never actually unique.
+     * With no DB-level uniqueness constraint on gdeltEventId, that let duplicate Conflict nodes
+     * accumulate, which then made findByGdeltEventId (an Optional<Conflict>-returning query,
+     * which requires 0-or-1 matches) throw IncorrectResultSizeDataAccessException on every future
+     * row whose coarse key collided with an existing duplicate pair.
+     */
+    private String buildDedupeKey(String[] cols) {
+        return cols[COL_GLOBALEVENTID].trim();
+    }
+
+    private Conflict parseConflictFromRow(String[] cols, String dedupeKey, Map<String, Country> countryCache) {
         String actor1Code = cols[COL_ACTOR1_COUNTRY].trim();
         String actor2Code = cols[COL_ACTOR2_COUNTRY].trim();
         String eventCodeRaw = cols[COL_EVENTCODE].trim();
         String sqlDateRaw = cols[COL_SQLDATE].trim();
-
-        String dedupeKey = String.join("|", actor1Code, actor2Code, eventCodeRaw, sqlDateRaw);
-        if (conflictRepository.findByGdeltEventId(dedupeKey).isPresent()) {
-            return IngestOutcome.DUPLICATE;
-        }
 
         String actor1Name = resolveCountryName(actor1Code);
         String actor2Name = resolveCountryName(actor2Code);
@@ -286,43 +385,25 @@ public class GdeltIngestionService {
 
         Set<Country> involved = conflict.getInvolvedCountries();
         if (WHITELIST_CODE_TO_NAME.containsKey(actor1Code)) {
-            involved.add(getOrCreateCountry(actor1Label));
+            involved.add(getOrCreateCountryCached(actor1Label, countryCache));
         }
         if (WHITELIST_CODE_TO_NAME.containsKey(actor2Code)) {
-            involved.add(getOrCreateCountry(actor2Label));
+            involved.add(getOrCreateCountryCached(actor2Label, countryCache));
         }
 
         String actionGeoCode = cols[COL_ACTIONGEO_COUNTRYCODE].trim();
         String regionName = FIPS_TO_WHITELIST_NAME.get(actionGeoCode);
         if (regionName != null) {
             conflict.setPrimaryRegion(regionName);
-            involved.add(getOrCreateCountry(regionName));
+            involved.add(getOrCreateCountryCached(regionName, countryCache));
         }
 
-        log.info("About to save conflict: dedupeKey={}, description={}, severity={}",
-                dedupeKey, conflict.getDescription(), conflict.getSeverity());
-
-        Conflict saved;
-        try {
-            saved = conflictRepository.save(conflict);
-        } catch (Exception e) {
-            log.error("AuraDB save failed for conflict [{}]: {}", conflict.getDescription(), e.getMessage(), e);
-            throw e;
-        }
-
-        if (saved == null || saved.getId() == null) {
-            log.error("conflictRepository.save() returned {} for dedupeKey={}",
-                    saved == null ? "null" : "an entity with no id", dedupeKey);
-            throw new IllegalStateException("Save did not persist a Conflict node for " + dedupeKey);
-        }
-
-        log.info("Saved conflict with ID: {}", saved.getId());
-        return IngestOutcome.INGESTED;
+        return conflict;
     }
 
     private List<String> downloadLatestEventRows() throws IOException {
-        log.info("Fetching GDELT manifest: {}", GDELT_LASTUPDATE_URL);
-        String manifest = restClient.get().uri(GDELT_LASTUPDATE_URL).retrieve().body(String.class);
+        log.info("Fetching GDELT manifest: {}", gdeltManifestUrl);
+        String manifest = restClient.get().uri(gdeltManifestUrl).retrieve().body(String.class);
         if (manifest == null || manifest.isBlank()) {
             throw new IOException("GDELT lastupdate.txt manifest was empty");
         }
@@ -365,9 +446,9 @@ public class GdeltIngestionService {
         if (lookupsLoaded.get()) {
             return;
         }
-        cameoCountryLookup = downloadCameoLookup(CAMEO_COUNTRY_URL, "CAMEO country");
-        cameoTypeLookup = downloadCameoLookup(CAMEO_TYPE_URL, "CAMEO actor type");
-        cameoEventCodeLookup = downloadCameoLookup(CAMEO_EVENTCODES_URL, "CAMEO event code");
+        cameoCountryLookup = downloadCameoLookup(cameoCountryUrl, "CAMEO country");
+        cameoTypeLookup = downloadCameoLookup(cameoTypeUrl, "CAMEO actor type");
+        cameoEventCodeLookup = downloadCameoLookup(cameoEventCodesUrl, "CAMEO event code");
         lookupsLoaded.set(true);
     }
 
@@ -462,6 +543,25 @@ public class GdeltIngestionService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * There are only ~32 possible whitelisted country names, but a batch has hundreds of
+     * whitelist-matching rows, each mentioning one - resolving country-by-name fresh from Neo4j
+     * per row (instead of caching per ingestion run) was another per-row round trip alongside the
+     * dedupe check and the save, and just as slow.
+     */
+    private Country getOrCreateCountryCached(String name, Map<String, Country> cache) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        Country cached = cache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        Country country = getOrCreateCountry(name);
+        cache.put(name, country);
+        return country;
     }
 
     private Country getOrCreateCountry(String name) {

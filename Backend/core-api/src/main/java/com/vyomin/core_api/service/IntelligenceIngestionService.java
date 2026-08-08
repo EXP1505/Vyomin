@@ -13,7 +13,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -48,23 +47,17 @@ public class IntelligenceIngestionService {
     //defining the countries we are targeting
     private static final List<String> TARGET_COUNTRIES = Arrays.asList("Russia", "China", "Iran", "USA", "North Korea","India","Israel","United Kingdom","Pakistan","Germany","France","Japan","South Korea","Brazil");
     
-    //initialize real-time data ingestion on application startup
-    //postconstruct used to run the method immediately after the service or the bean is created and the dependencies are injected
-    @PostConstruct
-    public void initializeDataIngestion() {
-        log.info("Initializing Open_Network data ingestion on startup...");
-        new Thread(() -> {
-            try {
-                Thread.sleep(2000); //wait 2 seconds for services to stabilize
-                ingestOpenNetworkData();
-            } catch (InterruptedException e) {
-                log.error("Interrupted during initialization", e);
-            }
-        }).start();
-    }
-    
-    //the schedule we are running the news ingestion for
-    @Scheduled(fixedRate = 900000)
+    // Removed a @PostConstruct thread that also called ingestOpenNetworkData() ~2 seconds after
+    // boot: since ingestOpenNetworkData is itself @Scheduled with an immediate first run, both
+    // fired within seconds of each other on every startup - two concurrent OpenSky ingestion
+    // passes doubling up on Neo4j load at the worst possible time. The @Scheduled initialDelay
+    // below is now the only startup trigger.
+
+    // Staggered against GdeltIngestionService.scheduledIngest (initialDelay 0) and
+    // ingestOpenNetworkData below so the three background jobs don't all hit Neo4j at once on
+    // startup - that pile-up was exhausting the connection pool and starving interactive search
+    // requests of a connection.
+    @Scheduled(fixedRate = 900000, initialDelay = 120000)
     public void ingestGdeltNews() {
         log.info("Starting GDELT news ingestion...");
         try {
@@ -157,8 +150,32 @@ public class IntelligenceIngestionService {
         });
     }
 
+    // Bulk version of getOrCreateCountry: one lookup and one save for the whole set instead of
+    // one round trip per name.
+    private void getOrCreateCountries(java.util.Set<String> names) {
+        if (names.isEmpty()) {
+            return;
+        }
+        List<Country> existing = countryRepository.findByNameIn(names);
+        java.util.Set<String> existingNames = existing.stream().map(Country::getName).collect(java.util.stream.Collectors.toSet());
+
+        List<Country> toCreate = names.stream()
+                .filter(name -> !existingNames.contains(name))
+                .map(name -> {
+                    Country country = new Country();
+                    country.setName(name);
+                    country.setRegion("Unknown");
+                    return country;
+                })
+                .toList();
+
+        if (!toCreate.isEmpty()) {
+            countryRepository.saveAll(toCreate);
+        }
+    }
+
     //scheduled to ingest real-time data from Open_Network API every 5 minutes
-    @Scheduled(fixedRate = 300000)
+    @Scheduled(fixedRate = 300000, initialDelay = 240000)
     public void ingestOpenNetworkData() {
         log.info("Starting OpenSky Network real-time data ingestion...");
         try {
@@ -202,25 +219,24 @@ public class IntelligenceIngestionService {
                 //checking if the states array is not empty and processing the flight data
                 if (states.isArray() && states.size() > 0) {
                     log.info("Fetched {} aircraft states from OpenSky Network", states.size());
-                    
+
+                    // A poll can carry thousands of aircraft sharing a much smaller set of
+                    // origin countries. Looking each one up (and creating missing ones) per
+                    // aircraft meant one Neo4j round trip per aircraft - thousands per poll,
+                    // hammering the DB hard enough to cause contention/timeouts elsewhere.
+                    // Resolve/create each distinct country name once per poll instead.
+                    java.util.Set<String> distinctCountryNames = new java.util.HashSet<>();
+                    int processed = 0;
                     for (JsonNode state : states) {
-                        try {
-                            String callsign = state.path(1).asText("UNKNOWN").trim();
-                            String countryName = state.path(2).asText("");
-                            double latitude = state.path(6).asDouble();
-                            double longitude = state.path(5).asDouble();
-                            double altitude = state.path(7).asDouble();
-                            
-                            if (callsign.isEmpty() || countryName.isEmpty()) continue;
-                            
-                            //create or update country node
-                            Country country = getOrCreateCountry(countryName);
-                            log.debug("Processing aircraft {} from {}", callsign, countryName);
-                        } catch (Exception e) {
-                            log.debug("Error processing aircraft state", e);
-                        }
+                        String callsign = state.path(1).asText("UNKNOWN").trim();
+                        String countryName = state.path(2).asText("");
+                        if (callsign.isEmpty() || countryName.isEmpty()) continue;
+                        distinctCountryNames.add(countryName);
+                        processed++;
                     }
-                    
+                    getOrCreateCountries(distinctCountryNames);
+                    log.info("Resolved {} distinct origin countries across {} aircraft", distinctCountryNames.size(), processed);
+
                     log.info("Successfully processed {} aircraft states", states.size());
                 } else {
                     log.info("No aircraft states available at this time");

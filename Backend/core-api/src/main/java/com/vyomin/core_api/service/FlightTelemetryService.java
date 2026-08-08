@@ -121,6 +121,19 @@ public class FlightTelemetryService {
         "VJT"   // VistaJet
     );
     //scheduled to fetch and broadcast real flight data every 5 minutes
+    /**
+     * Serves the last broadcast snapshot straight from Redis so a newly-opened tab has
+     * something to render immediately, instead of waiting for the next 5-minute scheduled
+     * broadcast (SimpMessagingTemplate.convertAndSend is fire-and-forget pub/sub - a client
+     * that subscribes between ticks gets nothing until the next one fires). Doesn't touch
+     * OpenSky, so it doesn't count against the API rate limit.
+     */
+    @SuppressWarnings("unchecked")
+    public List<FlightTelemetry> getLatestFlights() {
+        Object cached = redisTemplate.opsForValue().get(REDIS_KEY);
+        return cached instanceof List<?> list ? (List<FlightTelemetry>) list : List.of();
+    }
+
     @Scheduled(fixedRate = 300000)
     public void fetchAndBroadcastFlights() {
         try {
@@ -177,6 +190,15 @@ public class FlightTelemetryService {
 
                         if (!callsign.isEmpty() && latitude != 0 && longitude != 0) {
                             String flightType = classifyFlight(callsign, squawk, category);
+
+                            // Routine commercial airline traffic is the overwhelming majority of
+                            // OpenSky's ~12k global states and isn't a "tactical" target - including
+                            // it blows the broadcast payload up to ~2.5MB per tick, which is enough
+                            // to choke a browser tab's WebSocket receive + JSON.parse + re-render.
+                            if ("COMMERCIAL".equals(flightType)) {
+                                continue;
+                            }
+
                             String model = null;
                             String reg = null;
 

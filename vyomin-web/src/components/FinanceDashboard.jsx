@@ -1,8 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import StockDetailModal from './StockDetailModal';
+import { Panel } from './design/Panel';
+import { Sparkline } from './design/Sparkline';
 
-export const FinanceDashboard = ({ fullPage = false }) => {
+function TickerCard({ q, onSelect }) {
+  const positive = typeof q.percentChange === 'number' && q.percentChange >= 0;
+  const color = positive ? 'var(--positive)' : 'var(--negative)';
+  const formatPrice = (n) => (typeof n === 'number' && !Number.isNaN(n) ? n.toFixed(2) : '—');
+  const formatPercent = (n) => {
+    if (typeof n !== 'number' || Number.isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${n.toFixed(2)}%`;
+  };
+
+  return (
+    <Panel as="button" onClick={() => onSelect(q.symbol)} className="p-4 text-left transition-colors hover:border-[var(--accent)]">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-mono-data text-sm font-semibold" style={{ color: 'var(--text)' }}>{q.symbol}</div>
+          <div className="font-mono-data text-xs mt-0.5" style={{ color: 'var(--text-dim)' }}>${formatPrice(q.currentPrice)}</div>
+        </div>
+        <span className="font-mono-data text-xs px-2 py-1 border" style={{ color, borderColor: color, background: `${color}18` }}>
+          {formatPercent(q.percentChange)}
+        </span>
+      </div>
+      <div className="mt-3">
+        <Sparkline values={q.closes || []} width={140} height={28} />
+      </div>
+    </Panel>
+  );
+}
+
+export const FinanceDashboard = ({ fullPage = false, onJumpToGraph }) => {
   const token = useAuthStore((s) => s.token);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -10,20 +40,32 @@ export const FinanceDashboard = ({ fullPage = false }) => {
   const [results, setResults] = useState([]);
   const [selectedSymbol, setSelectedSymbol] = useState(null);
 
+  const authHeaders = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
-  const authHeaders = useMemo(() => {
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }, [token]);
+  const attachSparkline = async (rows) => {
+    const withSeries = await Promise.all(
+      rows.map(async (q) => {
+        try {
+          const res = await fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, {
+            headers: authHeaders,
+          });
+          const json = await res.json();
+          const closes = json?.data?.c || [];
+          return { ...q, closes: closes.slice(-20) };
+        } catch {
+          return { ...q, closes: [] };
+        }
+      })
+    );
+    return withSeries;
+  };
 
   const fetchTrending = async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/intel/finance/trending', {
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders,
-        },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
 
       if (!res.ok) {
@@ -33,13 +75,13 @@ export const FinanceDashboard = ({ fullPage = false }) => {
 
       const payload = await res.json();
       const data = payload?.data || [];
-      setResults(
-        data.map((q) => ({
-          symbol: q.symbol,
-          currentPrice: q.currentPrice,
-          percentChange: q.percentChange,
-        }))
-      );
+      const rows = data.map((q) => ({
+        symbol: q.symbol,
+        currentPrice: q.currentPrice,
+        percentChange: q.percentChange,
+      }));
+      setResults(rows);
+      setResults(await attachSparkline(rows));
     } catch (e) {
       setError(e.message || 'Failed to fetch trending');
     } finally {
@@ -56,10 +98,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     setError(null);
     try {
       const res = await fetch(`/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders,
-        },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
 
       if (!res.ok) {
@@ -69,17 +108,8 @@ export const FinanceDashboard = ({ fullPage = false }) => {
 
       const payload = await res.json();
       const q = payload?.data;
-      setResults(
-        q
-          ? [
-              {
-                symbol: q.symbol,
-                currentPrice: q.currentPrice,
-                percentChange: q.percentChange,
-              },
-            ]
-          : []
-      );
+      const rows = q ? [{ symbol: q.symbol, currentPrice: q.currentPrice, percentChange: q.percentChange }] : [];
+      setResults(await attachSparkline(rows));
     } catch (e) {
       setError(e.message || 'Failed to search symbol');
     } finally {
@@ -88,33 +118,21 @@ export const FinanceDashboard = ({ fullPage = false }) => {
   };
 
   useEffect(() => {
-    const run = async () => {
-      await fetchTrending();
-    };
-    run();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchTrending();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const formatPrice = (n) => {
-    if (typeof n !== 'number' || Number.isNaN(n)) return '—';
-    return n.toFixed(2);
-  };
-
-  const formatPercent = (n) => {
-    if (typeof n !== 'number' || Number.isNaN(n)) return '—';
-    // Finnhub dp is percent (e.g., 1.23 => 1.23%)
-    const sign = n > 0 ? '+' : '';
-    return `${sign}${n.toFixed(2)}%`;
-  };
-
   return (
     <>
-      <aside className={fullPage ? "h-full w-full bg-slate-900" : "h-full w-[420px] max-w-[85vw] bg-slate-900 border-l border-slate-700"}>
-        <div className="h-full flex flex-col">
-          <div className="p-5 border-b border-slate-700">
-            <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-emerald-400">Financial Telemetry</h2>
-            <div className="text-xs text-slate-500">Finnhub Quotes</div>
+      <Panel
+        as="aside"
+        className={fullPage ? 'flex h-full w-full flex-col' : 'flex h-full w-[420px] max-w-[85vw] flex-col'}
+      >
+        <div className="p-5 border-b" style={{ borderColor: 'var(--hairline)' }}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Financial Telemetry</h2>
+            <div className="font-mono-data text-xs" style={{ color: 'var(--text-faint)' }}>FINNHUB QUOTES</div>
           </div>
 
           <form onSubmit={submitSearch} className="mt-4 flex gap-2">
@@ -122,11 +140,15 @@ export const FinanceDashboard = ({ fullPage = false }) => {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search ticker (e.g., AAPL)"
-              className="flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+              className="font-mono-data flex-1 border px-3 py-2 text-sm focus:outline-none transition-colors"
+              style={{ background: 'var(--panel-2)', borderColor: 'var(--hairline)', color: 'var(--text)' }}
+              onFocus={(e) => (e.target.style.borderColor = 'var(--accent)')}
+              onBlur={(e) => (e.target.style.borderColor = 'var(--hairline)')}
             />
             <button
               type="submit"
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-4 py-2 rounded border border-emerald-500/40 transition-colors"
+              className="font-mono-data font-semibold px-4 py-2 border transition-colors"
+              style={{ borderColor: 'var(--accent)', color: 'var(--accent)', background: 'var(--accent-soft)' }}
             >
               Search
             </button>
@@ -135,53 +157,29 @@ export const FinanceDashboard = ({ fullPage = false }) => {
 
         <div className="p-5 flex-1 overflow-auto">
           {loading && results.length === 0 && (
-            <div className="text-slate-400 text-sm">Loading quotes...</div>
+            <div className="text-sm" style={{ color: 'var(--text-dim)' }}>Loading quotes...</div>
           )}
           {error && (
-            <div className="mb-4 p-3 bg-red-900/40 border border-red-800 text-red-200 rounded text-sm">
+            <div className="mb-4 p-3 border text-sm" style={{ background: 'rgba(255,92,108,0.1)', borderColor: 'var(--negative)', color: 'var(--negative)' }}>
               {error}
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-3">
-            {results.map((q) => {
-              const positive = typeof q.percentChange === 'number' && q.percentChange >= 0;
-              const colorClass = positive ? 'text-emerald-400 bg-emerald-900/30 border-emerald-800/50' : 'text-red-400 bg-red-900/30 border-red-800/50';
-
-              return (
-                <button
-                  key={q.symbol}
-                  type="button"
-                  onClick={() => setSelectedSymbol(q.symbol)}
-                  className="bg-slate-950 border border-slate-800 rounded-lg p-4 flex items-center justify-between gap-3 text-left hover:border-emerald-500/30 hover:bg-slate-900 transition-colors"
-                >
-                  <div>
-                    <div className="text-white font-bold tracking-wide">{q.symbol}</div>
-                    <div className="text-slate-300 text-sm">Current: ${formatPrice(q.currentPrice)}</div>
-                  </div>
-                  <div
-                    className={`min-w-[96px] text-right rounded-md border px-3 py-2 text-sm font-semibold ${colorClass}`}
-                  >
-                    {formatPercent(q.percentChange)}
-                  </div>
-                </button>
-              );
-            })}
+          <div className={fullPage ? 'grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3' : 'grid grid-cols-1 gap-3'}>
+            {results.map((q) => (
+              <TickerCard key={q.symbol} q={q} onSelect={setSelectedSymbol} />
+            ))}
 
             {!loading && results.length === 0 && !error && (
-              <div className="text-slate-500 text-sm">No quote data.</div>
+              <div className="text-sm" style={{ color: 'var(--text-faint)' }}>No quote data.</div>
             )}
           </div>
-
         </div>
-      </div>
-      </aside>
+      </Panel>
 
       {selectedSymbol ? (
-        <StockDetailModal symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} />
+        <StockDetailModal symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} onJumpToGraph={onJumpToGraph} />
       ) : null}
     </>
   );
 };
-
-

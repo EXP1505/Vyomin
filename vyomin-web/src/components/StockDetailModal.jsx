@@ -76,8 +76,8 @@ function CandlestickSvgChart({ chartData }) {
 
   const handleLeave = () => setHover({ idx: null, x: 0, y: 0 });
 
-  const bullishColor = '#34d399';
-  const bearishColor = '#f87171';
+  const bullishColor = '#35d6b8';
+  const bearishColor = '#ff5c6c';
 
   const tickCount = 4;
   const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => {
@@ -101,13 +101,22 @@ function CandlestickSvgChart({ chartData }) {
   const bodyW = Math.max(3, step * 0.6);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative" onMouseMove={handleMove} onMouseLeave={handleLeave}>
+    <div
+      ref={containerRef}
+      className="w-full h-full relative"
+      onMouseMove={handleMove}
+      onMouseLeave={handleLeave}
+      style={{
+        background:
+          'repeating-linear-gradient(to right, transparent, transparent 39px, rgba(124,134,152,0.08) 40px), repeating-linear-gradient(to bottom, transparent, transparent 39px, rgba(124,134,152,0.08) 40px)',
+      }}
+    >
       <svg width={W} height={H} className="block">
         {/* Grid */}
         {yTicks.map((t, i) => (
           <g key={i}>
-            <line x1={padding.left} x2={padding.left + innerW} y1={t.y} y2={t.y} stroke="#1e293b" strokeDasharray="3 3" />
-            <text x={padding.left - 10} y={t.y + 3} fill="#64748b" fontSize="10" textAnchor="end">
+            <line x1={padding.left} x2={padding.left + innerW} y1={t.y} y2={t.y} stroke="#1e222b" strokeDasharray="3 3" />
+            <text x={padding.left - 10} y={t.y + 3} fill="#7c8698" fontSize="10" fontFamily="'JetBrains Mono', monospace" textAnchor="end">
               {`$${t.v.toFixed(0)}`}
             </text>
           </g>
@@ -147,7 +156,7 @@ function CandlestickSvgChart({ chartData }) {
               const label = `${d.getMonth() + 1}/${d.getDate()}`;
               const xCenter = padding.left + step * (i + 0.5);
               return (
-                <text key={`x-${c.ts ?? i}`} x={xCenter} y={padding.top + innerH + 18} fill="#64748b" fontSize="10" textAnchor="middle">
+                <text key={`x-${c.ts ?? i}`} x={xCenter} y={padding.top + innerH + 18} fill="#7c8698" fontSize="10" fontFamily="'JetBrains Mono', monospace" textAnchor="middle">
                   {label}
                 </text>
               );
@@ -158,33 +167,40 @@ function CandlestickSvgChart({ chartData }) {
       {/* Tooltip */}
       {tooltip && (
         <div
-          className="absolute z-20 bg-slate-900 border border-slate-700 text-slate-100 p-3 rounded-lg shadow text-xs"
-          style={{ left: Math.min(W - 240, Math.max(8, hover.x - 120)), top: 10 }}
+          className="font-mono-data absolute z-20 border p-3 text-xs"
+          style={{
+            left: Math.min(W - 240, Math.max(8, hover.x - 120)),
+            top: 10,
+            background: 'var(--panel)',
+            borderColor: 'var(--hairline)',
+            color: 'var(--text)',
+          }}
         >
-          <div className="text-slate-400 mb-1">{new Date(tooltip.p.ts * 1000).toLocaleDateString()}</div>
-          <div className={tooltip.bullish ? 'text-emerald-400' : 'text-red-400'}>
+          <div className="mb-1" style={{ color: 'var(--text-dim)' }}>{new Date(tooltip.p.ts * 1000).toLocaleDateString()}</div>
+          <div style={{ color: tooltip.bullish ? 'var(--positive)' : 'var(--negative)' }}>
             {tooltip.bullish ? '▲ Bullish' : '▼ Bearish'}
           </div>
           <div className="mt-1 space-y-0.5">
-            <div>O: <span className="text-white">${tooltip.p.open?.toFixed(2)}</span></div>
-            <div>H: <span className="text-white">${tooltip.p.high?.toFixed(2)}</span></div>
-            <div>L: <span className="text-white">${tooltip.p.low?.toFixed(2)}</span></div>
-            <div>C: <span className="text-white">${tooltip.p.close?.toFixed(2)}</span></div>
+            <div>O: <span style={{ color: 'var(--text)' }}>${tooltip.p.open?.toFixed(2)}</span></div>
+            <div>H: <span style={{ color: 'var(--text)' }}>${tooltip.p.high?.toFixed(2)}</span></div>
+            <div>L: <span style={{ color: 'var(--text)' }}>${tooltip.p.low?.toFixed(2)}</span></div>
+            <div>C: <span style={{ color: 'var(--text)' }}>${tooltip.p.close?.toFixed(2)}</span></div>
           </div>
-          <div className="text-slate-500 text-xs mt-2">O = Open, H = High, L = Low, C = Close</div>
+          <div className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>O = Open, H = High, L = Low, C = Close</div>
         </div>
       )}
     </div>
   );
 }
 
-export default function StockDetailModal({ symbol, onClose }) {
+export default function StockDetailModal({ symbol, onClose, onJumpToGraph }) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [profile, setProfile] = useState(null);
   const [candles, setCandles] = useState(null);
   const [news, setNews] = useState(null);
+  const [relatedConflicts, setRelatedConflicts] = useState([]);
 
   const token = useAuthStore((s) => s.token);
 
@@ -242,6 +258,30 @@ export default function StockDetailModal({ symbol, onClose }) {
     };
   }, [profile]);
 
+  // Cross-link: surface conflict events tied to this company/region from the Intelligence Graph data.
+  useEffect(() => {
+    const name = company?.name;
+    if (!name) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRelatedConflicts([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`http://localhost:8080/api/intel/search?q=${encodeURIComponent(name)}&type=conflict`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        const conflicts = data?.results?.conflicts ?? [];
+        setRelatedConflicts(conflicts.slice(0, 6));
+      })
+      .catch(() => {
+        if (!cancelled) setRelatedConflicts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [company?.name]);
+
   const chartData = useMemo(() => {
     if (!candles) return [];
     const t = candles?.t;
@@ -281,15 +321,22 @@ export default function StockDetailModal({ symbol, onClose }) {
         className="absolute inset-0 flex items-center justify-center p-4"
         onMouseDown={(e) => { e.stopPropagation(); }}
       >
-        <div className="w-full max-w-[900px] max-h-[90vh] overflow-y-auto bg-slate-900 border border-slate-800 rounded-xl">
-          <div className="p-4 md:p-5 flex items-start justify-between gap-4 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
+        <div
+          className="w-full max-w-[900px] max-h-[90vh] overflow-y-auto border"
+          style={{ background: 'var(--panel)', borderColor: 'var(--hairline)' }}
+        >
+          <div
+            className="p-4 md:p-5 flex items-start justify-between gap-4 border-b sticky top-0 z-10"
+            style={{ borderColor: 'var(--hairline)', background: 'var(--panel)' }}
+          >
             <div className="min-w-0">
-              <div className="text-emerald-400 font-bold tracking-wide">{symbol}</div>
-              <div className="text-slate-400 text-sm">Financial details</div>
+              <div className="font-mono-data font-bold tracking-wide" style={{ color: 'var(--accent)' }}>{symbol}</div>
+              <div className="text-sm" style={{ color: 'var(--text-dim)' }}>Financial details</div>
             </div>
             <button
               onClick={onClose}
-              className="shrink-0 text-slate-300 hover:text-white rounded-md border border-slate-700 hover:border-slate-600 px-3 py-2"
+              className="shrink-0 border px-3 py-2 transition-colors"
+              style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}
             >
               ✕
             </button>
@@ -315,43 +362,60 @@ export default function StockDetailModal({ symbol, onClose }) {
             )}
 
             {!loading && error && (
-              <div className="mb-4 p-3 bg-red-900/40 border border-red-800 text-red-200 rounded text-sm">{error}</div>
+              <div className="mb-4 p-3 border text-sm" style={{ background: 'rgba(255,92,108,0.1)', borderColor: 'var(--negative)', color: 'var(--negative)' }}>{error}</div>
             )}
 
             {!loading && !error && (
               <div className="grid grid-cols-1 gap-4">
                 {/* Company header */}
-                <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded bg-slate-800/40 flex items-center justify-center overflow-hidden border border-slate-800 shrink-0">
+                <div className="flex items-center gap-4 border p-4" style={{ background: 'var(--panel-2)', borderColor: 'var(--hairline)' }}>
+                  <div className="w-14 h-14 flex items-center justify-center overflow-hidden border shrink-0" style={{ borderColor: 'var(--hairline)' }}>
                     {company?.logo ? (
                       <img src={company.logo} alt="logo" className="w-full h-full object-contain" />
                     ) : (
-                      <div className="text-slate-500 text-xs">No logo</div>
+                      <div className="text-xs" style={{ color: 'var(--text-faint)' }}>No logo</div>
                     )}
                   </div>
                   <div className="min-w-0">
-                    <div className="text-white font-bold truncate">{company?.name || symbol}</div>
-                    <div className="text-slate-300 text-sm truncate">{company?.industry || '—'}</div>
-                    <div className="text-slate-500 text-xs truncate">{company?.exchange || '—'}</div>
+                    <div className="font-bold truncate" style={{ color: 'var(--text)' }}>{company?.name || symbol}</div>
+                    <div className="text-sm truncate" style={{ color: 'var(--text-dim)' }}>{company?.industry || '—'}</div>
+                    <div className="text-xs truncate" style={{ color: 'var(--text-faint)' }}>{company?.exchange || '—'}</div>
                   </div>
                 </div>
 
                 {/* Candlestick chart */}
-                <div className="bg-slate-950 border border-slate-800 rounded-lg p-4">
-
-                  <div className="text-slate-300 text-sm mb-2">Last 30 trading days</div>
+                <div className="border p-4" style={{ background: 'var(--panel-2)', borderColor: 'var(--hairline)' }}>
+                  <div className="text-sm mb-2" style={{ color: 'var(--text-dim)' }}>Last 30 trading days</div>
                   <div className="h-[320px]">
                     <CandlestickSvgChart chartData={chartData} />
                   </div>
                 </div>
 
+                {/* Related conflict events — cross-links to the Intelligence Graph page */}
+                {relatedConflicts.length > 0 && (
+                  <div className="border p-4" style={{ background: 'var(--panel-2)', borderColor: 'var(--hairline)' }}>
+                    <div className="text-sm mb-3" style={{ color: 'var(--text-dim)' }}>Related conflict events</div>
+                    <div className="flex gap-3 overflow-x-auto pb-1">
+                      {relatedConflicts.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => onJumpToGraph?.(c.name, 'conflict')}
+                          className="font-mono-data shrink-0 whitespace-nowrap border px-3 py-2 text-xs transition-colors hover:border-[var(--accent)]"
+                          style={{ borderColor: 'var(--hairline)', color: 'var(--text)', background: 'var(--panel)' }}
+                        >
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* News */}
-                <div className="bg-slate-950 border border-slate-800 rounded-lg p-4">
-                  <div className="text-slate-300 text-sm mb-3">Latest news</div>
+                <div className="border p-4" style={{ background: 'var(--panel-2)', borderColor: 'var(--hairline)' }}>
+                  <div className="text-sm mb-3" style={{ color: 'var(--text-dim)' }}>Latest news</div>
                   <div className="space-y-3">
                     {lastNews.length === 0 && (
-                      <div className="text-slate-500 text-sm">No news available.</div>
+                      <div className="text-sm" style={{ color: 'var(--text-faint)' }}>No news available.</div>
                     )}
                     {lastNews.map((n, idx) => {
                       const image = n?.image || n?.imageUrl || null;
@@ -366,21 +430,22 @@ export default function StockDetailModal({ symbol, onClose }) {
                           href={url || '#'}
                           target="_blank"
                           rel="noreferrer"
-                          className="block border border-slate-800 rounded-lg p-3 hover:border-emerald-500/40 transition-colors"
+                          className="block border p-3 transition-colors hover:border-[var(--accent)]"
+                          style={{ borderColor: 'var(--hairline)' }}
                           onClick={(e) => { if (!url) e.preventDefault(); }}
                         >
                           <div className="flex gap-3">
                             {image ? (
-                              <img src={image} alt="news" className="w-14 h-14 rounded object-cover shrink-0" />
+                              <img src={image} alt="news" className="w-14 h-14 object-cover shrink-0" />
                             ) : (
-                              <div className="w-14 h-14 rounded bg-slate-800/40 shrink-0 flex items-center justify-center text-slate-500 text-xs">
+                              <div className="w-14 h-14 shrink-0 flex items-center justify-center text-xs" style={{ background: 'var(--panel)', color: 'var(--text-faint)' }}>
                                 N/A
                               </div>
                             )}
                             <div className="min-w-0">
-                              <div className="text-white font-semibold text-sm line-clamp-2">{n?.headline || '—'}</div>
-                              <div className="text-slate-500 text-xs mt-1">{n?.source || '—'}</div>
-                              <div className="text-slate-400 text-xs mt-1">{datetime}</div>
+                              <div className="font-semibold text-sm line-clamp-2" style={{ color: 'var(--text)' }}>{n?.headline || '—'}</div>
+                              <div className="text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{n?.source || '—'}</div>
+                              <div className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>{datetime}</div>
                             </div>
                           </div>
                         </a>

@@ -16,11 +16,23 @@ spring:
     redis:
       host: redis
       port: 6379
+    neo4j:
+      database: ${NEO4J_AURA_DATABASE}
   neo4j:
     uri: ${NEO4J_AURA_URI}
     authentication:
       username: ${NEO4J_AURA_USERNAME}
       password: ${NEO4J_AURA_PASSWORD}
+gdelt:
+  manifest:
+    url: ${GDELT_MANIFEST_URL:http://data.gdeltproject.org/gdeltv2/lastupdate.txt}
+  cameo:
+    country:
+      url: ${GDELT_CAMEO_COUNTRY_URL:http://data.gdeltproject.org/documentation/CAMEO.country.txt}
+    type:
+      url: ${GDELT_CAMEO_TYPE_URL:http://data.gdeltproject.org/documentation/CAMEO.type.txt}
+    event:
+      url: ${GDELT_CAMEO_EVENT_URL:http://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
 api:
   finnhub:
     key: ${FINNHUB_API_KEY:}

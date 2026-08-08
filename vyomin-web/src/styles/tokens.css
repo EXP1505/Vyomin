@@ -1,0 +1,21 @@
+:root {
+  --bg-base: #0a0b0d;
+  --panel: #111319;
+  --panel-2: #0d0f14;
+  --hairline: #1e222b;
+  --border-strong: #2c323f;
+  --text: #e6e9ef;
+  --text-dim: #7c8698;
+  --text-faint: #454c5c;
+  --accent: #ffb020;
+  --accent-soft: rgba(255, 176, 32, 0.15);
+  --positive: #35d6b8;
+  --negative: #ff5c6c;
+
+  --font-display: 'Chakra Petch', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+@theme {
+  --color-primary: #ffb020;
+}

@@ -7,21 +7,21 @@ const API_BASE = 'http://localhost:8080/api/intel';
 const WS_URL = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
 const MAX_AUTO_RETRIES_PER_QUERY = 1;
 
+// Company/Sector/Investor/Supply are hidden for now: GDELT (the only ingestion source wired
+// up today) only ever produces Conflict + Country nodes. Company/Sector have a thin Finnhub
+// path; Investor/Supply have no ingestion path at all. Re-add once there's a real data source.
 const SEARCH_TYPES = [
-  { value: 'company', label: 'Company' },
-  { value: 'sector', label: 'Sector' },
-  { value: 'country', label: 'Country' },
   { value: 'conflict', label: 'Conflict' },
-  { value: 'investor', label: 'Investor' },
-  { value: 'supply', label: 'Supply' },
+  { value: 'country', label: 'Country' },
 ];
 
+// Reduced to 3 hues + gray per the design system, rather than a 5-color rainbow.
 const NODE_COLORS = {
-  company: '#3b82f6',
-  conflict: '#ef4444',
-  investor: '#22c55e',
-  sector: '#a855f7',
-  country: '#f97316',
+  conflict: '#ffb020',
+  company: '#35d6b8',
+  investor: '#35d6b8',
+  country: '#5b8dee',
+  sector: '#7c8698',
 };
 
 function nodeId(kind, id) {
@@ -164,13 +164,15 @@ function buildGraphData(results) {
   return { nodes: Array.from(nodes.values()), links };
 }
 
-export default function IntelligenceGraphExplorer() {
-  const [query, setQuery] = useState('');
-  const [type, setType] = useState('company');
+export default function IntelligenceGraphExplorer({ initialSearch }) {
+  const [query, setQuery] = useState(initialSearch?.query ?? '');
+  const [type, setType] = useState(initialSearch?.type ?? 'conflict');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [searchResponse, setSearchResponse] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [hoverNode, setHoverNode] = useState(null);
+  const [hasSearched, setHasSearched] = useState(Boolean(initialSearch?.query));
 
   const containerRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -238,9 +240,21 @@ export default function IntelligenceGraphExplorer() {
     e?.preventDefault();
     if (!query.trim()) return;
     setSelectedNode(null);
+    setHasSearched(true);
     retryCountsRef.current.delete(`${type}:${query.trim()}`);
     executeSearch(query.trim(), type);
   };
+
+  // Seeded from the Financial Telemetry page's "related conflict events" cross-link.
+  useEffect(() => {
+    if (!initialSearch?.query) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setQuery(initialSearch.query);
+    setType(initialSearch.type ?? 'conflict');
+    setSelectedNode(null);
+    setHasSearched(true);
+    executeSearch(initialSearch.query, initialSearch.type ?? 'conflict');
+  }, [initialSearch]);
 
   // When a search returns nothing cached, the backend queues a background fetch and hands
   // back a requestId. Subscribe to that request's topic and re-run the search once it
@@ -308,199 +322,251 @@ export default function IntelligenceGraphExplorer() {
   }, [graphData.nodes]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 text-slate-200 p-6 gap-4 overflow-hidden">
-      <div>
-        <h1 className="text-2xl font-bold text-emerald-400">Intelligence Graph Explorer</h1>
-        <p className="text-sm text-slate-500">Search companies, sectors, countries, conflicts, investors and supply routes</p>
-      </div>
+    <div className="relative h-full w-full overflow-hidden" style={{ color: 'var(--text)' }}>
+      {/* Full-bleed graph canvas sits behind everything */}
+      <div
+        ref={containerRef}
+        className="absolute inset-0 z-0"
+        style={{ background: 'var(--panel-2)' }}
+      >
+        {graphData.nodes.length > 0 ? (
+          <ForceGraph2D
+            width={dimensions.width}
+            height={dimensions.height}
+            graphData={graphData}
+            nodeLabel="name"
+            linkColor={() => 'rgba(124, 134, 152, 0.3)'}
+            linkCurvature={0.25}
+            onNodeClick={(node) => setSelectedNode(node)}
+            onNodeHover={(node) => setHoverNode(node)}
+            nodeCanvasObject={(node, ctx, globalScale) => {
+              const isSelected = selectedNode?.id === node.id;
+              const isHovered = hoverNode?.id === node.id;
 
-      <form onSubmit={runSearch} className="flex gap-2 items-center">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search the intelligence graph..."
-          className="flex-grow bg-slate-800 border border-slate-700 rounded-md px-4 py-2 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        />
-        <select
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          className="bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          {SEARCH_TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="submit"
-          disabled={loading}
-          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
-        >
-          {loading ? 'Searching...' : 'Search'}
-        </button>
-      </form>
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, isSelected ? 7 : 5, 0, 2 * Math.PI, false);
+              ctx.fillStyle = node.color;
+              ctx.fill();
+              if (isSelected) {
+                ctx.strokeStyle = '#ffb020';
+                ctx.lineWidth = 1.5 / globalScale;
+                ctx.stroke();
+              }
 
-      {error && (
-        <div className="bg-red-950/40 border border-red-800 text-red-300 text-sm px-4 py-2 rounded-md">
-          {error}
-        </div>
-      )}
-
-      {searchResponse?.loading && (
-        <div className="flex items-center gap-2 bg-amber-950/40 border border-amber-800 text-amber-300 text-sm px-4 py-2 rounded-md">
-          <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-          No cached data for &quot;{searchResponse.query}&quot; — fetching live data in the background, this can take a few seconds...
-        </div>
-      )}
-
-      <div className="flex flex-grow gap-4 overflow-hidden">
-        <div className="w-72 flex-shrink-0 flex flex-col bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
-            <span className="text-sm font-semibold text-slate-300">Results</span>
-            <span className="text-xs text-slate-500">
-              {searchResponse ? `${searchResponse.totalMatches} matches` : '—'}
-            </span>
-          </div>
-          <div className="flex-grow overflow-y-auto divide-y divide-slate-800">
-            {flatResults.length === 0 && (
-              <div className="p-4 text-sm text-slate-500">No results yet</div>
-            )}
-            {flatResults.map((item) => (
-              <button
-                key={`${item.kind}-${item.id}`}
-                onClick={() => setSelectedNode(nodeById.get(nodeId(item.kind, item.id)) ?? null)}
-                className="w-full text-left px-4 py-3 hover:bg-slate-900 transition-colors"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-slate-200 truncate">{item.name}</span>
-                  <span
-                    className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
-                    style={{ color: NODE_COLORS[item.kind], borderColor: NODE_COLORS[item.kind], borderWidth: 1 }}
-                  >
-                    {item.kind}
-                  </span>
-                </div>
-                {item.score != null && (
-                  <div className="text-xs text-slate-500 mt-1">Match score: {item.score}</div>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div
-          ref={containerRef}
-          className="flex-grow rounded-lg border border-slate-800 overflow-hidden relative z-0 bg-[#0f172a]"
-        >
-          {graphData.nodes.length > 0 ? (
-            <ForceGraph2D
-              width={dimensions.width}
-              height={dimensions.height}
-              graphData={graphData}
-              nodeLabel="name"
-              linkColor={() => 'rgba(148, 163, 184, 0.35)'}
-              onNodeClick={(node) => setSelectedNode(node)}
-              nodeCanvasObject={(node, ctx, globalScale) => {
-                const label = node.name;
+              // Labels only render on hover/selection to avoid collision clutter at high node counts.
+              if (isSelected || isHovered) {
                 const fontSize = 12 / globalScale;
-                ctx.font = `${fontSize}px Sans-Serif`;
-
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, selectedNode?.id === node.id ? 7 : 5, 0, 2 * Math.PI, false);
-                ctx.fillStyle = node.color;
-                ctx.fill();
-                if (selectedNode?.id === node.id) {
-                  ctx.strokeStyle = '#f8fafc';
-                  ctx.lineWidth = 1.5 / globalScale;
-                  ctx.stroke();
-                }
-
+                ctx.font = `${fontSize}px 'JetBrains Mono', monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillStyle = '#e2e8f0';
-                ctx.fillText(label, node.x, node.y + 10);
-              }}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-slate-500 text-sm">
-              Search the graph to see results
+                ctx.fillStyle = '#e6e9ef';
+                ctx.fillText(node.name, node.x, node.y + 10);
+              }
+            }}
+            nodePointerAreaPaint={(node, color, ctx) => {
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, selectedNode?.id === node.id ? 7 : 5, 0, 2 * Math.PI, false);
+              ctx.fill();
+            }}
+          />
+        ) : (
+          !hasSearched && (
+            <div className="flex h-full items-center justify-center text-sm" style={{ color: 'var(--text-faint)' }}>
+              &nbsp;
             </div>
-          )}
-        </div>
+          )
+        )}
+      </div>
 
-        <div className="w-80 flex-shrink-0 bg-slate-950 border border-slate-800 rounded-lg overflow-y-auto">
-          <div className="px-4 py-3 border-b border-slate-800">
-            <span className="text-sm font-semibold text-slate-300">Details</span>
+      {/* Search bar: centered overlay on first load, docks to the top once a search runs */}
+      <div
+        className="absolute left-1/2 z-20 w-full max-w-2xl px-6 transition-all duration-500 ease-out"
+        style={
+          hasSearched
+            ? { top: '1.25rem', transform: 'translateX(-50%)' }
+            : { top: '50%', transform: 'translate(-50%, -50%)' }
+        }
+      >
+        {!hasSearched && (
+          <div className="mb-5 text-center">
+            <h1 className="text-2xl font-semibold" style={{ color: 'var(--text)' }}>Intelligence Graph Explorer</h1>
+            <p className="mt-1 text-sm" style={{ color: 'var(--text-dim)' }}>
+              Search a country or conflict — companies, sectors, and investors surface as connected entities
+            </p>
           </div>
-          {!selectedNode ? (
-            <div className="p-4 text-sm text-slate-500">Select a node to see details</div>
-          ) : (
-            <div className="p-4 space-y-4">
-              <div>
-                <div
-                  className="inline-block text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mb-1"
-                  style={{ color: NODE_COLORS[selectedNode.type], borderColor: NODE_COLORS[selectedNode.type], borderWidth: 1 }}
-                >
-                  {selectedNode.type}
-                </div>
-                <h3 className="text-lg font-semibold text-slate-100">{selectedNode.name}</h3>
-              </div>
+        )}
 
-              <div>
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Properties</h4>
-                <dl className="text-sm space-y-1">
-                  {Object.entries(selectedNode.raw ?? {})
-                    .filter(([, value]) => typeof value !== 'object' || value === null)
-                    .map(([key, value]) => (
-                      <div key={key} className="flex justify-between gap-2">
-                        <dt className="text-slate-500">{key}</dt>
-                        <dd className="text-slate-300 text-right truncate">{String(value)}</dd>
-                      </div>
-                    ))}
-                </dl>
-              </div>
+        <form onSubmit={runSearch} className="flex items-center gap-2 shadow-2xl">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search the country or conflict…"
+            autoFocus
+            className="font-mono-data flex-grow border px-4 py-3 text-sm focus:outline-none transition-colors"
+            style={{ background: 'var(--panel)', borderColor: 'var(--hairline)', color: 'var(--text)' }}
+            onFocus={(e) => (e.target.style.borderColor = 'var(--accent)')}
+            onBlur={(e) => (e.target.style.borderColor = 'var(--hairline)')}
+          />
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="font-mono-data border px-3 py-3 text-sm focus:outline-none"
+            style={{ background: 'var(--panel)', borderColor: 'var(--hairline)', color: 'var(--text)' }}
+          >
+            {SEARCH_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            disabled={loading}
+            className="text-sm font-medium px-5 py-3 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ borderColor: 'var(--accent)', color: loading ? 'var(--text-dim)' : 'var(--accent)', background: 'var(--accent-soft)' }}
+          >
+            {loading ? 'Searching...' : 'Search'}
+          </button>
+        </form>
 
-              <div>
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                  Connected entities ({connectedEntities.length})
-                </h4>
-                {connectedEntities.length === 0 ? (
-                  <p className="text-sm text-slate-500">No connections in current results</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {connectedEntities.map(({ otherId, kind, score }) => {
-                      const other = nodeById.get(otherId);
-                      if (!other) return null;
-                      return (
-                        <li key={otherId}>
-                          <button
-                            onClick={() => setSelectedNode(other)}
-                            className="w-full text-left px-3 py-2 rounded-md bg-slate-900 hover:bg-slate-800 transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-sm text-slate-200 truncate">{other.name}</span>
-                              <span
-                                className="text-[10px] uppercase tracking-wide"
-                                style={{ color: NODE_COLORS[other.type] }}
-                              >
-                                {other.type}
-                              </span>
-                            </div>
-                            {kind === 'conflict' && score != null && (
-                              <div className="text-xs text-slate-500 mt-0.5">Match score: {score}</div>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )}
+        {error && (
+          <div className="mt-2 text-sm px-4 py-2 border" style={{ background: 'rgba(255,92,108,0.1)', borderColor: 'var(--negative)', color: 'var(--negative)' }}>
+            {error}
+          </div>
+        )}
+
+        {searchResponse?.loading && (
+          <div className="mt-2 flex items-center gap-2 text-sm px-4 py-2 border" style={{ background: 'var(--accent-soft)', borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+            <span className="h-2 w-2 rounded-full" style={{ background: 'var(--accent)', animation: 'pulse 2s infinite' }} />
+            No cached data for &quot;{searchResponse.query}&quot; — fetching live data in the background, this can take a few seconds...
+          </div>
+        )}
+      </div>
+
+      {/* Results: slides in from the left once a search has run */}
+      <div
+        className="absolute left-0 top-0 z-10 flex h-full w-72 flex-col overflow-hidden border-r transition-transform duration-500 ease-out"
+        style={{
+          borderColor: 'var(--hairline)',
+          background: 'var(--panel)',
+          transform: hasSearched ? 'translateX(0)' : 'translateX(-100%)',
+        }}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--hairline)' }}>
+          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Results</span>
+          <span className="font-mono-data text-xs" style={{ color: 'var(--text-faint)' }}>
+            {searchResponse ? `${searchResponse.totalMatches} matches` : '—'}
+          </span>
         </div>
+        <div className="flex-grow overflow-y-auto divide-y" style={{ borderColor: 'var(--hairline)' }}>
+          {flatResults.length === 0 && (
+            <div className="p-4 text-sm" style={{ color: 'var(--text-faint)' }}>No results yet</div>
+          )}
+          {flatResults.map((item) => (
+            <button
+              key={`${item.kind}-${item.id}`}
+              onClick={() => setSelectedNode(nodeById.get(nodeId(item.kind, item.id)) ?? null)}
+              className="w-full text-left px-4 py-3 transition-colors border-b"
+              style={{ borderColor: 'var(--hairline)' }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm truncate" style={{ color: 'var(--text)' }}>{item.name}</span>
+                <span
+                  className="font-mono-data text-[10px] uppercase tracking-wide px-1.5 py-0.5"
+                  style={{ color: NODE_COLORS[item.kind], borderColor: NODE_COLORS[item.kind], borderWidth: 1 }}
+                >
+                  {item.kind}
+                </span>
+              </div>
+              {item.score != null && (
+                <div className="font-mono-data text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Match score: {item.score}</div>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Details: slides in from the right once a search has run */}
+      <div
+        className="absolute right-0 top-0 z-10 h-full w-80 overflow-y-auto border-l transition-transform duration-500 ease-out"
+        style={{
+          borderColor: 'var(--hairline)',
+          background: 'var(--panel)',
+          transform: hasSearched ? 'translateX(0)' : 'translateX(100%)',
+        }}
+      >
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--hairline)' }}>
+          <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Details</span>
+        </div>
+        {!selectedNode ? (
+          <div className="p-4 text-sm" style={{ color: 'var(--text-faint)' }}>Select a node to see details</div>
+        ) : (
+          <div className="p-4 space-y-4">
+            <div>
+              <div
+                className="font-mono-data inline-block text-[10px] uppercase tracking-wide px-1.5 py-0.5 mb-1"
+                style={{ color: NODE_COLORS[selectedNode.type], borderColor: NODE_COLORS[selectedNode.type], borderWidth: 1 }}
+              >
+                {selectedNode.type}
+              </div>
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{selectedNode.name}</h3>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>Properties</h4>
+              <dl className="font-mono-data text-sm space-y-1">
+                {Object.entries(selectedNode.raw ?? {})
+                  .filter(([, value]) => typeof value !== 'object' || value === null)
+                  .map(([key, value]) => (
+                    <div key={key} className="flex justify-between gap-2">
+                      <dt style={{ color: 'var(--text-faint)' }}>{key}</dt>
+                      <dd className="text-right truncate" style={{ color: 'var(--text)' }}>{String(value)}</dd>
+                    </div>
+                  ))}
+              </dl>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>
+                Connected entities ({connectedEntities.length})
+              </h4>
+              {connectedEntities.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--text-faint)' }}>No connections in current results</p>
+              ) : (
+                <ul className="space-y-2">
+                  {connectedEntities.map(({ otherId, kind, score }) => {
+                    const other = nodeById.get(otherId);
+                    if (!other) return null;
+                    return (
+                      <li key={otherId}>
+                        <button
+                          onClick={() => setSelectedNode(other)}
+                          className="w-full text-left px-3 py-2 transition-colors border"
+                          style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)' }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm truncate" style={{ color: 'var(--text)' }}>{other.name}</span>
+                            <span
+                              className="font-mono-data text-[10px] uppercase tracking-wide"
+                              style={{ color: NODE_COLORS[other.type] }}
+                            >
+                              {other.type}
+                            </span>
+                          </div>
+                          {kind === 'conflict' && score != null && (
+                            <div className="font-mono-data text-xs mt-0.5" style={{ color: 'var(--text-faint)' }}>Match score: {score}</div>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ import com.vyomin.core_api.service.GdeltIngestionService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -77,6 +78,11 @@ public class IntelligenceController {
             "company", "sector", "country", "conflict", "investor", "supply");
     private static final int SEARCH_RESULT_LIMIT = 50;
 
+    // Without this, each repository call below opened its own Neo4j session/connection instead
+    // of sharing one - 6-8 separate connection acquisitions per request, which was enough on its
+    // own (even with no background ingestion running concurrently) to exhaust AuraDB's connection
+    // pool and time out waiting for a free connection.
+    @Transactional(readOnly = true)
     @GetMapping("/search")
     public ResponseEntity<?> search(@RequestParam("q") String q,
                                      @RequestParam("type") String type) {
@@ -236,12 +242,7 @@ public class IntelligenceController {
                         matchScores = castMatchScores(matched);
                         log.info("matchScores cast: {}", matchScores != null ? "not null" : "NULL");
 
-                        List<Conflict> directConflicts = conflictRepository.findAll().stream()
-                                .filter(c -> c != null && c.getInvolvedCountries() != null
-                                        && c.getInvolvedCountries().stream().anyMatch(ic ->
-                                                ic != null && ic.getName() != null
-                                                        && countryNames.contains(ic.getName().toLowerCase())))
-                                .toList();
+                        List<Conflict> directConflicts = conflictRepository.findByInvolvedCountryNamesIgnoreCase(countryNames);
                         log.info("directConflicts: {}", directConflicts.size());
 
                         conflicts = dedupeConflicts(Stream.concat(viaCompanies.stream(), directConflicts.stream())
@@ -501,6 +502,17 @@ public class IntelligenceController {
      * only the conflicts that actually matched one of the target companies.
      */
     private Map<String, Object> matchConflictsForCompanies(List<Company> targetCompanies) {
+        // With no target companies, every conflict is guaranteed to have zero overlap - skip the
+        // findAll()-and-analyze pass entirely instead of running analyzeConflict() against every
+        // conflict in the database (13,000+ and growing every 15 minutes) just to prove that.
+        // This was the actual multi-minute bottleneck behind the country/sector search endpoints.
+        if (targetCompanies.isEmpty()) {
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("conflicts", List.<Conflict>of());
+            empty.put("matchScores", Map.<String, Integer>of());
+            return empty;
+        }
+
         Set<Long> targetIds = targetCompanies.stream().map(Company::getId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
 
@@ -646,6 +658,13 @@ public class IntelligenceController {
     @GetMapping("/conflicts")
     public ResponseEntity<?> getActiveConflicts() {
         return ResponseEntity.ok(conflictRepository.findAll());
+    }
+
+    // Lightweight count for UI tiles that only need a number - findAll() above hydrates every
+    // Conflict's relationships and gets slower as GDELT ingestion grows the table.
+    @GetMapping("/conflicts/count")
+    public ResponseEntity<?> getActiveConflictsCount() {
+        return ResponseEntity.ok(java.util.Map.of("count", conflictRepository.count()));
     }
 
     @GetMapping("/supply-chain/{companyName}")
