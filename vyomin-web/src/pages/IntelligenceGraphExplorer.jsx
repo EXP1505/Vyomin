@@ -173,8 +173,10 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [hoverNode, setHoverNode] = useState(null);
   const [hasSearched, setHasSearched] = useState(Boolean(initialSearch?.query));
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   const containerRef = useRef(null);
+  const fgRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
   useEffect(() => {
@@ -190,6 +192,12 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
   }, []);
 
   const graphData = useMemo(() => buildGraphData(searchResponse?.results), [searchResponse]);
+
+  // A fresh search reuses the same ForceGraph instance with new data - let the new layout
+  // re-tune its own forces instead of skipping because the previous graph already did.
+  useEffect(() => {
+    if (fgRef.current) fgRef.current.__forcesTuned = false;
+  }, [graphData]);
 
   const flatResults = useMemo(() => {
     const results = searchResponse?.results;
@@ -321,35 +329,115 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
     return map;
   }, [graphData.nodes]);
 
+  // Degree count drives the hub-vs-leaf visual treatment - the searched country/entity
+  // typically has by far the most connections and should read as the center of the graph.
+  const nodeDegree = useMemo(() => {
+    const degree = new Map();
+    for (const link of graphData.links) {
+      const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+      const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+      degree.set(sourceId, (degree.get(sourceId) ?? 0) + 1);
+      degree.set(targetId, (degree.get(targetId) ?? 0) + 1);
+    }
+    return degree;
+  }, [graphData.links]);
+
   return (
     <div className="relative h-full w-full overflow-hidden" style={{ color: 'var(--text)' }}>
       {/* Full-bleed graph canvas sits behind everything */}
       <div
         ref={containerRef}
         className="absolute inset-0 z-0"
-        style={{ background: 'var(--panel-2)' }}
+        style={{
+          background:
+            'radial-gradient(circle at 50% 45%, rgba(255,176,32,0.05), transparent 55%),' +
+            'repeating-linear-gradient(0deg, rgba(124,134,152,0.06) 0px, rgba(124,134,152,0.06) 1px, transparent 1px, transparent 48px),' +
+            'repeating-linear-gradient(90deg, rgba(124,134,152,0.06) 0px, rgba(124,134,152,0.06) 1px, transparent 1px, transparent 48px),' +
+            'var(--panel-2)',
+        }}
       >
         {graphData.nodes.length > 0 ? (
           <ForceGraph2D
+            ref={fgRef}
             width={dimensions.width}
             height={dimensions.height}
             graphData={graphData}
             nodeLabel="name"
-            linkColor={() => 'rgba(124, 134, 152, 0.3)'}
+            linkColor={(link) => {
+              const targetColor = (typeof link.target === 'object' ? link.target.color : nodeById.get(link.target)?.color) || '#7c8698';
+              return `${targetColor}40`;
+            }}
             linkCurvature={0.25}
+            linkWidth={0.6}
+            linkDirectionalParticles={1}
+            linkDirectionalParticleWidth={1.6}
+            linkDirectionalParticleColor={() => '#ffb020'}
+            linkDirectionalParticleSpeed={0.003}
+            d3AlphaDecay={0.02}
+            d3VelocityDecay={0.25}
+            onEngineStop={() => {
+              // Spread nodes out with stronger repulsion and longer links once the initial
+              // layout settles - at high node counts the defaults leave everything bunched
+              // into one dense clump around whatever node has the most connections. Only
+              // re-tune once per graph load (the ref won't have this set yet) so dragging a
+              // node afterward doesn't keep re-triggering a fresh reheat.
+              if (fgRef.current && !fgRef.current.__forcesTuned) {
+                fgRef.current.__forcesTuned = true;
+                fgRef.current.d3Force('charge')?.strength(-160).distanceMax(800);
+                fgRef.current.d3Force('link')?.distance(90);
+                fgRef.current.d3ReheatSimulation();
+              }
+            }}
+            onNodeDragEnd={(node) => {
+              // Pin a node where it's dropped instead of letting the simulation immediately
+              // pull it back into the cluster.
+              node.fx = node.x;
+              node.fy = node.y;
+            }}
             onNodeClick={(node) => setSelectedNode(node)}
             onNodeHover={(node) => setHoverNode(node)}
             nodeCanvasObject={(node, ctx, globalScale) => {
+              // Nodes can have non-finite x/y for a frame or two while the force simulation is
+              // still warming up (especially right after d3ReheatSimulation) - createRadialGradient
+              // throws on NaN/Infinity, so skip drawing until a real position is assigned.
+              if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+
               const isSelected = selectedNode?.id === node.id;
               const isHovered = hoverNode?.id === node.id;
+              const degree = nodeDegree.get(node.id) ?? 0;
+              const isHub = degree >= 8;
+              const baseRadius = isHub ? 9 : Math.min(6, 3 + degree * 0.4);
+              const radius = isSelected ? baseRadius + 2 : baseRadius;
+
+              // Soft glow behind every node - reinforces the amber-HUD look instead of flat dots.
+              const glow = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, radius * 2.6);
+              glow.addColorStop(0, `${node.color}55`);
+              glow.addColorStop(1, `${node.color}00`);
+              ctx.fillStyle = glow;
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, radius * 2.6, 0, 2 * Math.PI, false);
+              ctx.fill();
 
               ctx.beginPath();
-              ctx.arc(node.x, node.y, isSelected ? 7 : 5, 0, 2 * Math.PI, false);
+              ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
               ctx.fillStyle = node.color;
               ctx.fill();
+
+              // Hub entities (the searched country/conflict itself) get a targeting-reticle ring
+              // to read clearly as the center of the graph, matching the app's corner-bracket motif.
+              if (isHub) {
+                ctx.strokeStyle = `${node.color}90`;
+                ctx.lineWidth = 1 / globalScale;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius + 4, 0, 2 * Math.PI, false);
+                ctx.stroke();
+              }
+
               if (isSelected) {
                 ctx.strokeStyle = '#ffb020';
                 ctx.lineWidth = 1.5 / globalScale;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius + 1.5, 0, 2 * Math.PI, false);
                 ctx.stroke();
               }
 
@@ -359,14 +447,29 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
                 ctx.font = `${fontSize}px 'JetBrains Mono', monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
+                const label = node.name;
+                const padding = 4;
+                const metrics = ctx.measureText(label);
+                ctx.fillStyle = 'rgba(10,11,13,0.85)';
+                ctx.fillRect(
+                  node.x - metrics.width / 2 - padding,
+                  node.y + radius + 4,
+                  metrics.width + padding * 2,
+                  fontSize + padding
+                );
                 ctx.fillStyle = '#e6e9ef';
-                ctx.fillText(node.name, node.x, node.y + 10);
+                ctx.fillText(label, node.x, node.y + radius + 4 + (fontSize + padding) / 2);
               }
             }}
             nodePointerAreaPaint={(node, color, ctx) => {
+              if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+              const degree = nodeDegree.get(node.id) ?? 0;
+              const isHub = degree >= 8;
+              const baseRadius = isHub ? 9 : Math.min(6, 3 + degree * 0.4);
+              const radius = selectedNode?.id === node.id ? baseRadius + 2 : baseRadius;
               ctx.fillStyle = color;
               ctx.beginPath();
-              ctx.arc(node.x, node.y, selectedNode?.id === node.id ? 7 : 5, 0, 2 * Math.PI, false);
+              ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI, false);
               ctx.fill();
             }}
           />
@@ -464,12 +567,18 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
           {flatResults.length === 0 && (
             <div className="p-4 text-sm" style={{ color: 'var(--text-faint)' }}>No results yet</div>
           )}
-          {flatResults.map((item) => (
+          {flatResults.map((item) => {
+            const isSelected = selectedNode?.id === nodeId(item.kind, item.id);
+            return (
             <button
               key={`${item.kind}-${item.id}`}
               onClick={() => setSelectedNode(nodeById.get(nodeId(item.kind, item.id)) ?? null)}
               className="w-full text-left px-4 py-3 transition-colors border-b"
-              style={{ borderColor: 'var(--hairline)' }}
+              style={{
+                borderColor: 'var(--hairline)',
+                background: isSelected ? 'var(--accent-soft)' : 'transparent',
+                borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
+              }}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm truncate" style={{ color: 'var(--text)' }}>{item.name}</span>
@@ -483,22 +592,40 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
               {item.score != null && (
                 <div className="font-mono-data text-xs mt-1" style={{ color: 'var(--text-faint)' }}>Match score: {item.score}</div>
               )}
+              {/* Many distinct GDELT events share the same actor-pair/event-type name (e.g. multiple
+                  "Engage in Diplomatic Cooperation" events on different days) - the date disambiguates
+                  otherwise-identical-looking rows. */}
+              {item.kind === 'conflict' && item.raw?.dateReported && (
+                <div className="font-mono-data text-xs mt-1" style={{ color: 'var(--text-faint)' }}>{item.raw.dateReported}</div>
+              )}
             </button>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Details: slides in from the right once a search has run */}
+      {/* Details: only slides in once a node is actually selected. Expands leftward for long values. */}
       <div
-        className="absolute right-0 top-0 z-10 h-full w-80 overflow-y-auto border-l transition-transform duration-500 ease-out"
+        className="absolute right-0 top-0 z-10 h-full overflow-y-auto border-l transition-all duration-300 ease-out"
         style={{
+          width: detailsExpanded ? 'min(560px, 60vw)' : '20rem',
           borderColor: 'var(--hairline)',
           background: 'var(--panel)',
-          transform: hasSearched ? 'translateX(0)' : 'translateX(100%)',
+          transform: selectedNode ? 'translateX(0)' : 'translateX(100%)',
         }}
       >
-        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--hairline)' }}>
+        <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--hairline)' }}>
           <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Details</span>
+          {selectedNode && (
+            <button
+              onClick={() => setDetailsExpanded((v) => !v)}
+              className="font-mono-data text-xs px-2 py-1 border transition-colors hover:border-[var(--accent)]"
+              style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}
+              title={detailsExpanded ? 'Collapse' : 'Expand for full values'}
+            >
+              {detailsExpanded ? '⟼ Collapse' : '⟻ Expand'}
+            </button>
+          )}
         </div>
         {!selectedNode ? (
           <div className="p-4 text-sm" style={{ color: 'var(--text-faint)' }}>Select a node to see details</div>
@@ -518,15 +645,38 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
               <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>Properties</h4>
               <dl className="font-mono-data text-sm space-y-1">
                 {Object.entries(selectedNode.raw ?? {})
-                  .filter(([, value]) => typeof value !== 'object' || value === null)
-                  .map(([key, value]) => (
-                    <div key={key} className="flex justify-between gap-2">
-                      <dt style={{ color: 'var(--text-faint)' }}>{key}</dt>
-                      <dd className="text-right truncate" style={{ color: 'var(--text)' }}>{String(value)}</dd>
-                    </div>
-                  ))}
+                  .filter(([key, value]) => key !== 'sourceUrl' && (typeof value !== 'object' || value === null))
+                  .map(([key, value]) =>
+                    detailsExpanded ? (
+                      <div key={key} className="py-1 border-b" style={{ borderColor: 'var(--hairline)' }}>
+                        <dt style={{ color: 'var(--text-faint)' }}>{key}</dt>
+                        <dd className="whitespace-normal break-words" style={{ color: 'var(--text)' }}>{String(value)}</dd>
+                      </div>
+                    ) : (
+                      <div key={key} className="flex justify-between gap-2">
+                        <dt style={{ color: 'var(--text-faint)' }}>{key}</dt>
+                        <dd className="text-right truncate" style={{ color: 'var(--text)' }}>{String(value)}</dd>
+                      </div>
+                    )
+                  )}
               </dl>
             </div>
+
+            {/* Only rendered when GDELT actually supplied a source article for this event. */}
+            {selectedNode.raw?.sourceUrl && (
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>Source Article</h4>
+                <a
+                  href={selectedNode.raw.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block px-3 py-2 border text-sm transition-colors hover:border-[var(--accent)] truncate"
+                  style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)', color: 'var(--accent)' }}
+                >
+                  Read source article →
+                </a>
+              </div>
+            )}
 
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>

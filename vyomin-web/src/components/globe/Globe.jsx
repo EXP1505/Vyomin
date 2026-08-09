@@ -6,6 +6,7 @@ import { CountryBorders } from './CountryBorders';
 import { IndiaFrontierLayer } from './IndiaFrontierLayer';
 import { TrackMarkers } from './TrackMarkers';
 import { CapitalMarkers } from './CapitalMarkers';
+import { ConflictMarkers } from './ConflictMarkers';
 import { latLonToVector3, GLOBE_RADIUS } from './geo';
 
 const IDLE_RESUME_MS = 4000;
@@ -50,7 +51,18 @@ const ZoomController = forwardRef((_props, ref) => {
   return null;
 });
 
-function Scene({ flights, activeTypes, selectedCallsign, onSelectTrack, onCountryClick, focusTarget, onArrive, zoomRef, compact }) {
+function Scene({
+  flights,
+  activeTypes,
+  selectedCallsign,
+  onSelectTrack,
+  onCountryClick,
+  focusTarget,
+  onArrive,
+  zoomRef,
+  compact,
+  conflicts,
+}) {
   return (
     <>
       <ambientLight intensity={1.1} />
@@ -66,17 +78,14 @@ function Scene({ flights, activeTypes, selectedCallsign, onSelectTrack, onCountr
       </mesh>
       <CountryBorders />
       <IndiaFrontierLayer />
-      {!compact && (
-        <>
-          <TrackMarkers
-            flights={flights}
-            activeTypes={activeTypes}
-            selectedCallsign={selectedCallsign}
-            onSelect={onSelectTrack}
-          />
-          <CapitalMarkers />
-        </>
-      )}
+      <TrackMarkers
+        flights={flights}
+        activeTypes={activeTypes}
+        selectedCallsign={selectedCallsign}
+        onSelect={onSelectTrack}
+      />
+      {conflicts && conflicts.length > 0 && <ConflictMarkers conflicts={conflicts} />}
+      {!compact && <CapitalMarkers />}
       <CameraFocus target={focusTarget} onArrive={onArrive} />
       {!compact && <ZoomController ref={zoomRef} />}
     </>
@@ -84,7 +93,7 @@ function Scene({ flights, activeTypes, selectedCallsign, onSelectTrack, onCountr
 }
 
 export const Globe = forwardRef(function Globe(
-  { flights = [], activeTypes = new Set(), selectedCallsign, onSelectTrack, compact = false },
+  { flights = [], activeTypes = new Set(), selectedCallsign, onSelectTrack, compact = false, conflicts = [] },
   ref
 ) {
   const controlsRef = useRef();
@@ -134,6 +143,7 @@ export const Globe = forwardRef(function Globe(
           onArrive={() => setFocusTarget(null)}
           zoomRef={zoomRef}
           compact={compact}
+          conflicts={conflicts}
         />
       </Suspense>
       {!compact && (

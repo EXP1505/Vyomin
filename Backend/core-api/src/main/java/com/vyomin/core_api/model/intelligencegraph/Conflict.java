@@ -41,6 +41,9 @@ public class Conflict {
     private LocalDate dateReported;
     private List<String> keywords = new ArrayList<>();
 
+    /** GDELT's SOURCEURL column - the article this event was extracted from, when GDELT provides one. */
+    private String sourceUrl;
+
     @Relationship(type = "INVOLVES", direction = Relationship.Direction.OUTGOING)
     private Set<Country> involvedCountries = new HashSet<>();
 }

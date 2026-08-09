@@ -660,6 +660,13 @@ public class IntelligenceController {
         return ResponseEntity.ok(conflictRepository.findAll());
     }
 
+    // Bounded most-recent-first read for the Home page's live globe flashpoints and signal feed -
+    // see findTop300ByOrderByDateReportedDesc for why this doesn't use findAll() above.
+    @GetMapping("/conflicts/recent")
+    public ResponseEntity<?> getRecentConflicts() {
+        return ResponseEntity.ok(conflictRepository.findTop40ByOrderByDateReportedDesc());
+    }
+
     // Lightweight count for UI tiles that only need a number - findAll() above hydrates every
     // Conflict's relationships and gets slower as GDELT ingestion grows the table.
     @GetMapping("/conflicts/count")

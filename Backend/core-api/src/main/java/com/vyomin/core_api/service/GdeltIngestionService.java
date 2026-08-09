@@ -126,7 +126,8 @@ public class GdeltIngestionService {
     private static final int COL_ACTIONGEO_COUNTRYCODE = 53;
     private static final int COL_ACTIONGEO_LAT = 56;
     private static final int COL_ACTIONGEO_LONG = 57;
-    private static final int MIN_COLUMNS = 58;
+    private static final int COL_SOURCEURL = 60;
+    private static final int MIN_COLUMNS = 61;
 
     private final ConflictRepository conflictRepository;
     private final CountryRepository countryRepository;
@@ -376,6 +377,9 @@ public class GdeltIngestionService {
         conflict.setActor2Name(actor2Label);
         conflict.setActor2CountryCode(actor2Code.isBlank() ? null : actor2Code);
         conflict.setActor2Type(actor2Type);
+
+        String sourceUrl = cols[COL_SOURCEURL].trim();
+        conflict.setSourceUrl(sourceUrl.isBlank() ? null : sourceUrl);
 
         List<String> keywords = new ArrayList<>();
         keywords.add(actor1Label);

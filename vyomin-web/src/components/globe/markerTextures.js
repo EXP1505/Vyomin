@@ -123,6 +123,30 @@ const DRAWERS = {
   UNKNOWN: drawUnknown,
 };
 
+// Pulsing amber ring used for conflict/event flashpoints - scale/opacity animated per-frame
+// by ConflictMarkers, this texture itself is just a static glow + ring stamp.
+export function getRingTexture(color) {
+  const key = `ring:${color}`;
+  if (cache.has(key)) return cache.get(key);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, SIZE, SIZE);
+  glow(ctx, color);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(CENTER, CENTER, CENTER * 0.55, 0, Math.PI * 2);
+  ctx.stroke();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  cache.set(key, texture);
+  return texture;
+}
+
 export function getMarkerTexture(type, color) {
   const key = `${type}:${color}`;
   if (cache.has(key)) return cache.get(key);
