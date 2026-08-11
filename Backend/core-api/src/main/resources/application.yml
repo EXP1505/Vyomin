@@ -33,6 +33,8 @@ gdelt:
       url: ${GDELT_CAMEO_TYPE_URL:http://data.gdeltproject.org/documentation/CAMEO.type.txt}
     event:
       url: ${GDELT_CAMEO_EVENT_URL:http://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
+  conflict:
+    retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:180}
 api:
   finnhub:
     key: ${FINNHUB_API_KEY:}
@@ -47,3 +49,8 @@ app:
   admin:
     email: ${DEFAULT_ADMIN_EMAIL}
     password: ${DEFAULT_ADMIN_PASSWORD}
+  jwt:
+    secret: ${APP_JWT_SECRET:CHANGE_ME_IN_ENVIRONMENT}
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID:}

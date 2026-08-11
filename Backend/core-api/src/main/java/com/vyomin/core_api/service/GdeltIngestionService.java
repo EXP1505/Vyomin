@@ -52,7 +52,12 @@ public class GdeltIngestionService {
     private static final DateTimeFormatter SQLDATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     // Actor1CountryCode / Actor2CountryCode in the GDELT CSV use CAMEO (near-ISO3) country codes.
+    // Widened from an original 32-country list to ~150 so that most UN member states resolve
+    // instead of silently falling through to "no cached data" on every search. Ingestion volume
+    // and AuraDB free-tier node growth is bounded independently by pruneOldConflicts(), not by
+    // keeping this list short.
     private static final Map<String, String> WHITELIST_CODE_TO_NAME = Map.ofEntries(
+            // Original 32
             Map.entry("RUS", "Russia"), Map.entry("UKR", "Ukraine"), Map.entry("USA", "USA"),
             Map.entry("CHN", "China"), Map.entry("IND", "India"), Map.entry("ISR", "Israel"),
             Map.entry("IRN", "Iran"), Map.entry("PRK", "North Korea"), Map.entry("SYR", "Syria"),
@@ -63,13 +68,63 @@ public class GdeltIngestionService {
             Map.entry("KOR", "South Korea"), Map.entry("PHL", "Philippines"), Map.entry("THA", "Thailand"),
             Map.entry("IDN", "Indonesia"), Map.entry("AUS", "Australia"), Map.entry("BRA", "Brazil"),
             Map.entry("ARG", "Argentina"), Map.entry("MEX", "Mexico"), Map.entry("COL", "Colombia"),
-            Map.entry("CAN", "Canada"), Map.entry("NGA", "Nigeria")
+            Map.entry("CAN", "Canada"), Map.entry("NGA", "Nigeria"),
+            // Europe
+            Map.entry("ESP", "Spain"), Map.entry("ITA", "Italy"), Map.entry("PRT", "Portugal"),
+            Map.entry("NLD", "Netherlands"), Map.entry("BEL", "Belgium"), Map.entry("CHE", "Switzerland"),
+            Map.entry("AUT", "Austria"), Map.entry("SWE", "Sweden"), Map.entry("NOR", "Norway"),
+            Map.entry("DNK", "Denmark"), Map.entry("FIN", "Finland"), Map.entry("GRC", "Greece"),
+            Map.entry("IRL", "Ireland"), Map.entry("ROU", "Romania"), Map.entry("BGR", "Bulgaria"),
+            Map.entry("HUN", "Hungary"), Map.entry("CZE", "Czech Republic"), Map.entry("SVK", "Slovakia"),
+            Map.entry("HRV", "Croatia"), Map.entry("SRB", "Serbia"), Map.entry("BIH", "Bosnia and Herzegovina"),
+            Map.entry("ALB", "Albania"), Map.entry("MKD", "North Macedonia"), Map.entry("SVN", "Slovenia"),
+            Map.entry("EST", "Estonia"), Map.entry("LVA", "Latvia"), Map.entry("LTU", "Lithuania"),
+            Map.entry("BLR", "Belarus"), Map.entry("MDA", "Moldova"), Map.entry("GEO", "Georgia"),
+            Map.entry("ARM", "Armenia"), Map.entry("AZE", "Azerbaijan"), Map.entry("CYP", "Cyprus"),
+            Map.entry("MLT", "Malta"), Map.entry("ISL", "Iceland"), Map.entry("LUX", "Luxembourg"),
+            Map.entry("MNE", "Montenegro"),
+            // Middle East / Central Asia
+            Map.entry("JOR", "Jordan"), Map.entry("LBN", "Lebanon"), Map.entry("KWT", "Kuwait"),
+            Map.entry("QAT", "Qatar"), Map.entry("BHR", "Bahrain"), Map.entry("AFG", "Afghanistan"),
+            Map.entry("PAK", "Pakistan"), Map.entry("KAZ", "Kazakhstan"), Map.entry("UZB", "Uzbekistan"),
+            Map.entry("TKM", "Turkmenistan"), Map.entry("TJK", "Tajikistan"), Map.entry("KGZ", "Kyrgyzstan"),
+            Map.entry("MNG", "Mongolia"),
+            // East / South / Southeast Asia
+            Map.entry("TWN", "Taiwan"), Map.entry("VNM", "Vietnam"), Map.entry("MMR", "Myanmar"),
+            Map.entry("MYS", "Malaysia"), Map.entry("SGP", "Singapore"), Map.entry("LAO", "Laos"),
+            Map.entry("KHM", "Cambodia"), Map.entry("BGD", "Bangladesh"), Map.entry("LKA", "Sri Lanka"),
+            Map.entry("NPL", "Nepal"), Map.entry("BTN", "Bhutan"), Map.entry("MDV", "Maldives"),
+            // Africa
+            Map.entry("ZAF", "South Africa"), Map.entry("KEN", "Kenya"), Map.entry("ETH", "Ethiopia"),
+            Map.entry("SOM", "Somalia"), Map.entry("SDN", "Sudan"), Map.entry("SSD", "South Sudan"),
+            Map.entry("LBY", "Libya"), Map.entry("TUN", "Tunisia"), Map.entry("DZA", "Algeria"),
+            Map.entry("MAR", "Morocco"), Map.entry("GHA", "Ghana"), Map.entry("CIV", "Ivory Coast"),
+            Map.entry("SEN", "Senegal"), Map.entry("MLI", "Mali"), Map.entry("NER", "Niger"),
+            Map.entry("TCD", "Chad"), Map.entry("CMR", "Cameroon"), Map.entry("COD", "DR Congo"),
+            Map.entry("COG", "Congo"), Map.entry("UGA", "Uganda"), Map.entry("TZA", "Tanzania"),
+            Map.entry("RWA", "Rwanda"), Map.entry("BDI", "Burundi"), Map.entry("ZWE", "Zimbabwe"),
+            Map.entry("ZMB", "Zambia"), Map.entry("MOZ", "Mozambique"), Map.entry("AGO", "Angola"),
+            Map.entry("NAM", "Namibia"), Map.entry("BWA", "Botswana"), Map.entry("SLE", "Sierra Leone"),
+            Map.entry("LBR", "Liberia"), Map.entry("GIN", "Guinea"), Map.entry("BFA", "Burkina Faso"),
+            Map.entry("MRT", "Mauritania"), Map.entry("ERI", "Eritrea"), Map.entry("DJI", "Djibouti"),
+            Map.entry("GAB", "Gabon"),
+            // Americas
+            Map.entry("CHL", "Chile"), Map.entry("PER", "Peru"), Map.entry("VEN", "Venezuela"),
+            Map.entry("ECU", "Ecuador"), Map.entry("BOL", "Bolivia"), Map.entry("PRY", "Paraguay"),
+            Map.entry("URY", "Uruguay"), Map.entry("CUB", "Cuba"), Map.entry("HTI", "Haiti"),
+            Map.entry("DOM", "Dominican Republic"), Map.entry("GTM", "Guatemala"), Map.entry("HND", "Honduras"),
+            Map.entry("NIC", "Nicaragua"), Map.entry("CRI", "Costa Rica"), Map.entry("PAN", "Panama"),
+            Map.entry("JAM", "Jamaica"),
+            // Oceania
+            Map.entry("NZL", "New Zealand"), Map.entry("PNG", "Papua New Guinea"), Map.entry("FJI", "Fiji")
     );
 
     // Best-effort FIPS 10-4 -> whitelist name, used only to try Conflict --IN_REGION--> Country.
     // ActionGeo_CountryCode is reported in FIPS (not CAMEO), so this only ever matches when the
-    // event's location happens to fall in one of our 32 whitelisted countries; anything else
+    // event's location happens to fall in one of our whitelisted countries; anything else
     // (unmapped FIPS code, or a country outside the whitelist) just skips IN_REGION for that row.
+    // Not every whitelisted country has a confirmed FIPS entry here - unmapped ones degrade
+    // gracefully (primaryRegion just stays unset) rather than risk a wrong code-to-country guess.
     private static final Map<String, String> FIPS_TO_WHITELIST_NAME = Map.ofEntries(
             Map.entry("RS", "Russia"), Map.entry("UP", "Ukraine"), Map.entry("US", "USA"),
             Map.entry("CH", "China"), Map.entry("IN", "India"), Map.entry("IS", "Israel"),
@@ -81,7 +136,49 @@ public class GdeltIngestionService {
             Map.entry("KS", "South Korea"), Map.entry("RP", "Philippines"), Map.entry("TH", "Thailand"),
             Map.entry("ID", "Indonesia"), Map.entry("AS", "Australia"), Map.entry("BR", "Brazil"),
             Map.entry("AR", "Argentina"), Map.entry("MX", "Mexico"), Map.entry("CO", "Colombia"),
-            Map.entry("CA", "Canada"), Map.entry("NI", "Nigeria")
+            Map.entry("CA", "Canada"), Map.entry("NI", "Nigeria"),
+            Map.entry("SP", "Spain"), Map.entry("IT", "Italy"), Map.entry("PO", "Portugal"),
+            Map.entry("NL", "Netherlands"), Map.entry("BE", "Belgium"), Map.entry("SZ", "Switzerland"),
+            Map.entry("AU", "Austria"), Map.entry("SW", "Sweden"), Map.entry("NO", "Norway"),
+            Map.entry("DA", "Denmark"), Map.entry("FI", "Finland"), Map.entry("GR", "Greece"),
+            Map.entry("EI", "Ireland"), Map.entry("RO", "Romania"), Map.entry("BU", "Bulgaria"),
+            Map.entry("HU", "Hungary"), Map.entry("EZ", "Czech Republic"), Map.entry("LO", "Slovakia"),
+            Map.entry("HR", "Croatia"), Map.entry("RI", "Serbia"), Map.entry("BK", "Bosnia and Herzegovina"),
+            Map.entry("AL", "Albania"), Map.entry("MK", "North Macedonia"), Map.entry("SI", "Slovenia"),
+            Map.entry("EN", "Estonia"), Map.entry("LG", "Latvia"), Map.entry("LH", "Lithuania"),
+            Map.entry("BO", "Belarus"), Map.entry("MD", "Moldova"), Map.entry("GG", "Georgia"),
+            Map.entry("AM", "Armenia"), Map.entry("AJ", "Azerbaijan"), Map.entry("CY", "Cyprus"),
+            Map.entry("MT", "Malta"), Map.entry("IC", "Iceland"), Map.entry("LU", "Luxembourg"),
+            Map.entry("MJ", "Montenegro"),
+            Map.entry("JO", "Jordan"), Map.entry("LE", "Lebanon"), Map.entry("KU", "Kuwait"),
+            Map.entry("QA", "Qatar"), Map.entry("BA", "Bahrain"), Map.entry("AF", "Afghanistan"),
+            Map.entry("PK", "Pakistan"), Map.entry("KZ", "Kazakhstan"), Map.entry("UZ", "Uzbekistan"),
+            Map.entry("TX", "Turkmenistan"), Map.entry("TI", "Tajikistan"), Map.entry("KG", "Kyrgyzstan"),
+            Map.entry("MG", "Mongolia"),
+            Map.entry("TW", "Taiwan"), Map.entry("VM", "Vietnam"), Map.entry("BM", "Myanmar"),
+            Map.entry("MY", "Malaysia"), Map.entry("SN", "Singapore"), Map.entry("LA", "Laos"),
+            Map.entry("CB", "Cambodia"), Map.entry("BG", "Bangladesh"), Map.entry("CE", "Sri Lanka"),
+            Map.entry("NP", "Nepal"), Map.entry("BT", "Bhutan"), Map.entry("MV", "Maldives"),
+            Map.entry("SF", "South Africa"), Map.entry("KE", "Kenya"), Map.entry("ET", "Ethiopia"),
+            Map.entry("SO", "Somalia"), Map.entry("SU", "Sudan"), Map.entry("OD", "South Sudan"),
+            Map.entry("LY", "Libya"), Map.entry("TS", "Tunisia"), Map.entry("AG", "Algeria"),
+            Map.entry("MO", "Morocco"), Map.entry("GH", "Ghana"), Map.entry("IV", "Ivory Coast"),
+            Map.entry("SG", "Senegal"), Map.entry("ML", "Mali"), Map.entry("NG", "Niger"),
+            Map.entry("CD", "Chad"), Map.entry("CM", "Cameroon"), Map.entry("CG", "DR Congo"),
+            Map.entry("CF", "Congo"), Map.entry("UG", "Uganda"), Map.entry("TZ", "Tanzania"),
+            Map.entry("RW", "Rwanda"), Map.entry("BY", "Burundi"), Map.entry("ZI", "Zimbabwe"),
+            Map.entry("ZA", "Zambia"), Map.entry("MZ", "Mozambique"), Map.entry("AO", "Angola"),
+            Map.entry("WA", "Namibia"), Map.entry("BC", "Botswana"), Map.entry("SL", "Sierra Leone"),
+            Map.entry("LI", "Liberia"), Map.entry("GV", "Guinea"), Map.entry("UV", "Burkina Faso"),
+            Map.entry("MR", "Mauritania"), Map.entry("ER", "Eritrea"), Map.entry("DJ", "Djibouti"),
+            Map.entry("GB", "Gabon"),
+            Map.entry("CI", "Chile"), Map.entry("PE", "Peru"), Map.entry("VE", "Venezuela"),
+            Map.entry("EC", "Ecuador"), Map.entry("BL", "Bolivia"), Map.entry("PA", "Paraguay"),
+            Map.entry("UY", "Uruguay"), Map.entry("CU", "Cuba"), Map.entry("HA", "Haiti"),
+            Map.entry("DR", "Dominican Republic"), Map.entry("GT", "Guatemala"), Map.entry("HO", "Honduras"),
+            Map.entry("NU", "Nicaragua"), Map.entry("CS", "Costa Rica"), Map.entry("PM", "Panama"),
+            Map.entry("JM", "Jamaica"),
+            Map.entry("NZ", "New Zealand"), Map.entry("PP", "Papua New Guinea"), Map.entry("FJ", "Fiji")
     );
 
     // CAMEO quad-class root event codes (01-20) - stable, documented taxonomy; used as the
@@ -145,6 +242,9 @@ public class GdeltIngestionService {
     @Value("${gdelt.cameo.event.url}")
     private String cameoEventCodesUrl;
 
+    @Value("${gdelt.conflict.retention-days}")
+    private int conflictRetentionDays;
+
     private static final int SAVE_BATCH_SIZE = 250;
     // GDELT's own feed only updates every 15 minutes, so an on-demand fetch that lands within
     // this window of the last completed run has nothing new to find - skip re-downloading and
@@ -176,6 +276,32 @@ public class GdeltIngestionService {
     @Scheduled(fixedRate = 900_000, initialDelay = 0)
     public void scheduledIngest() {
         ingestLatestGdeltEvents();
+    }
+
+    // Runs once a day - conflict volume changes slowly enough that hourly pruning would just be
+    // wasted AuraDB round trips. Offset from scheduledIngest's initialDelay=0 so the two don't
+    // compete for the same connection pool slot on every app restart.
+    private static final long PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000L;
+
+    @Scheduled(fixedRate = PRUNE_INTERVAL_MS, initialDelay = PRUNE_INTERVAL_MS)
+    public void scheduledPruneOldConflicts() {
+        pruneOldConflicts();
+    }
+
+    /**
+     * Deletes Conflict nodes older than gdelt.conflict.retention-days. Ingestion runs forever
+     * every 15 minutes with no upper bound on its own, so without this the Conflict node count
+     * (and its INVOLVES relationships) grows monotonically and eventually exceeds AuraDB free
+     * tier's 200k-node cap - this is what actually keeps the free tier usable long-term, not the
+     * size of the country whitelist.
+     */
+    public long pruneOldConflicts() {
+        LocalDate cutoff = LocalDate.now().minusDays(conflictRetentionDays);
+        long deleted = conflictRepository.deleteByDateReportedBefore(cutoff);
+        if (deleted > 0) {
+            log.info("Pruned {} Conflict nodes older than {} ({} day retention)", deleted, cutoff, conflictRetentionDays);
+        }
+        return deleted;
     }
 
     /**

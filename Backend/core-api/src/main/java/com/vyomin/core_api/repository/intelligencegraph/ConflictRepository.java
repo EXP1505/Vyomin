@@ -4,6 +4,7 @@ import com.vyomin.core_api.model.intelligencegraph.Conflict;
 import org.springframework.data.neo4j.repository.Neo4jRepository;
 import org.springframework.data.neo4j.repository.query.Query;
 import org.springframework.data.repository.query.Param;
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -41,4 +42,15 @@ public interface ConflictRepository extends Neo4jRepository<Conflict, Long> {
     // so a search always surfaced old events instead of the most current ones.
     @Query("MATCH (c:Conflict)-[rel:INVOLVES]->(co:Country) WHERE toLower(co.name) IN $lowerNames RETURN DISTINCT c, rel, co ORDER BY c.dateReported DESC")
     List<Conflict> findByInvolvedCountryNamesIgnoreCase(@Param("lowerNames") Collection<String> lowerNames);
+
+    /**
+     * Keeps AuraDB free-tier node count bounded: without this, GDELT ingestion running every 15
+     * minutes forever accumulates Conflict nodes indefinitely and eventually exhausts the
+     * 200k-node free-tier cap regardless of how many countries are whitelisted. Widening in the
+     * cutoff-less MATCH lets the DB batch/stream the delete instead of loading every match into
+     * the JVM first. Returns the deleted count purely for logging - the delete itself doesn't
+     * depend on it.
+     */
+    @Query("MATCH (c:Conflict) WHERE c.dateReported < $cutoff WITH c DETACH DELETE c RETURN count(c) AS deletedCount")
+    long deleteByDateReportedBefore(@Param("cutoff") LocalDate cutoff);
 }

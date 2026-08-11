@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
+import { useBookmarkStore } from '../store/bookmarkStore';
 
 const formatEpochSeconds = (epochSeconds) => {
 
@@ -194,6 +195,9 @@ function CandlestickSvgChart({ chartData }) {
 }
 
 export default function StockDetailModal({ symbol, onClose, onJumpToGraph }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const bookmarked = useBookmarkStore((s) => s.isStockBookmarked(symbol));
+  const toggleStock = useBookmarkStore((s) => s.toggleStock);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -333,13 +337,25 @@ export default function StockDetailModal({ symbol, onClose, onJumpToGraph }) {
               <div className="font-mono-data font-bold tracking-wide" style={{ color: 'var(--accent)' }}>{symbol}</div>
               <div className="text-sm" style={{ color: 'var(--text-dim)' }}>Financial details</div>
             </div>
-            <button
-              onClick={onClose}
-              className="shrink-0 border px-3 py-2 transition-colors"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}
-            >
-              ✕
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {isAuthenticated && (
+                <button
+                  onClick={() => toggleStock(symbol)}
+                  title={bookmarked ? 'Remove bookmark' : 'Bookmark this stock'}
+                  className="border px-3 py-2 transition-colors"
+                  style={{ borderColor: 'var(--hairline)', color: bookmarked ? 'var(--accent)' : 'var(--text-dim)' }}
+                >
+                  {bookmarked ? '★ Watching' : '☆ Watch'}
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="border px-3 py-2 transition-colors"
+                style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           <div className="p-4 md:p-5">

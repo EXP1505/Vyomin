@@ -87,6 +87,36 @@ public class FinanceController {
         }
     }
 
+    @GetMapping("/movers")
+    public ResponseEntity<?> movers(@RequestParam(value = "period", defaultValue = "day") String period) {
+        try {
+            FinanceService.MoversResult result = financeService.getMovers(period);
+            return ResponseEntity.ok(Map.of("type", "movers", "period", period, "data", result));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/market-news")
+    public ResponseEntity<String> marketNews() {
+        try {
+            JsonNode news = financeService.marketNews();
+            ObjectNode res = objectMapper.createObjectNode();
+            res.put("type", "market-news");
+            res.set("data", news);
+            return ResponseEntity.ok()
+                    .header("Content-Type", "application/json")
+                    .body(objectMapper.writeValueAsString(res));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
+    }
+
     @GetMapping("/news")
     public ResponseEntity<String> news(@RequestParam("symbol") String symbol) {
         try {

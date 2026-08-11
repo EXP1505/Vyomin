@@ -10,40 +10,66 @@ import { useTelemetrySocket } from '../hooks/useTelemetrySocket';
 import { useGraphStore } from '../store/graphStore';
 import { useRecentConflicts } from '../hooks/useRecentConflicts';
 import { useAuthStore } from '../store/authStore';
+import { useBookmarkedStockSymbols } from '../store/bookmarkStore';
+import { useNavigate } from 'react-router-dom';
 
 const API_BASE = 'http://localhost:8080/api/intel';
 const TICKER_POLL_MS = 20000;
 const ALL_FLIGHT_TYPES = new Set(['MILITARY', 'CARGO', 'HELICOPTER', 'DRONE', 'PRIVATE', 'UNKNOWN']);
+const MILITARY_ONLY = new Set(['MILITARY']);
 
 function useTrendingTickers() {
   const token = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const bookmarkedSymbolsKey = useBookmarkedStockSymbols();
   const [tickers, setTickers] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const bookmarkedSymbols = bookmarkedSymbolsKey ? bookmarkedSymbolsKey.split(',') : [];
 
-    const load = () => {
-      fetch('/api/intel/finance/trending', { headers })
-        .then((r) => r.json())
-        .then(async (payload) => {
-          if (cancelled) return;
-          const top = (payload?.data || []).slice(0, 4);
-          const withSeries = await Promise.all(
-            top.map(async (q) => {
+    const attachSeries = (rows) =>
+      Promise.all(
+        rows.map(async (q) => {
+          try {
+            const res = await fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, { headers });
+            const json = await res.json();
+            const closes = json?.data?.c || json?.c || [];
+            return { ...q, closes: closes.slice(-20) };
+          } catch {
+            return { ...q, closes: [] };
+          }
+        })
+      );
+
+    const load = async () => {
+      try {
+        let top;
+        if (isAuthenticated && bookmarkedSymbols.length > 0) {
+          const quotes = await Promise.all(
+            bookmarkedSymbols.slice(0, 4).map(async (symbol) => {
               try {
-                const res = await fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, { headers });
+                const res = await fetch(`/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, { headers });
                 const json = await res.json();
-                const closes = json?.data?.c || json?.c || [];
-                return { ...q, closes: closes.slice(-20) };
+                return json?.data || null;
               } catch {
-                return { ...q, closes: [] };
+                return null;
               }
             })
           );
-          if (!cancelled) setTickers(withSeries);
-        })
-        .catch(() => {});
+          top = quotes.filter(Boolean);
+        } else {
+          const res = await fetch('/api/intel/finance/trending', { headers });
+          const payload = await res.json();
+          top = (payload?.data || []).slice(0, 4);
+        }
+        if (cancelled) return;
+        const withSeries = await attachSeries(top);
+        if (!cancelled) setTickers(withSeries);
+      } catch {
+        // ignore
+      }
     };
 
     load();
@@ -54,7 +80,7 @@ function useTrendingTickers() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [token]);
+  }, [token, isAuthenticated, bookmarkedSymbolsKey]);
 
   return tickers;
 }
@@ -195,7 +221,9 @@ function FinancePreviewCard({ onNavigate, tickers }) {
   );
 }
 
-export function Home({ onNavigate }) {
+export function Home() {
+  const navigate = useNavigate();
+  const onNavigate = (key) => navigate('/' + key);
   useTelemetrySocket();
   const flights = useTelemetryStore((s) => s.flights);
   const graphCounts = useGraphCounts();
@@ -215,7 +243,7 @@ export function Home({ onNavigate }) {
 
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]" style={{ height: '54vh', minHeight: '420px' }}>
         <Panel className="relative overflow-hidden p-0">
-          <Globe flights={flights} activeTypes={ALL_FLIGHT_TYPES} conflicts={recentConflicts} />
+          <Globe flights={flights} activeTypes={MILITARY_ONLY} conflicts={recentConflicts} disableTouchZoom />
         </Panel>
         <Panel className="flex flex-col overflow-hidden p-4">
           <div className="mb-2 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>

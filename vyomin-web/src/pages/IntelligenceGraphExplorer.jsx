@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
+import { useAuthStore } from '../store/authStore';
+import { useBookmarkStore } from '../store/bookmarkStore';
+import { useLocation } from 'react-router-dom';
 
 const API_BASE = 'http://localhost:8080/api/intel';
 const WS_URL = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
@@ -164,7 +167,8 @@ function buildGraphData(results) {
   return { nodes: Array.from(nodes.values()), links };
 }
 
-export default function IntelligenceGraphExplorer({ initialSearch }) {
+export default function IntelligenceGraphExplorer() {
+  const initialSearch = useLocation().state;
   const [query, setQuery] = useState(initialSearch?.query ?? '');
   const [type, setType] = useState(initialSearch?.type ?? 'conflict');
   const [loading, setLoading] = useState(false);
@@ -174,6 +178,10 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
   const [hoverNode, setHoverNode] = useState(null);
   const [hasSearched, setHasSearched] = useState(Boolean(initialSearch?.query));
   const [detailsExpanded, setDetailsExpanded] = useState(false);
+
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isEntityBookmarked = useBookmarkStore((s) => s.isEntityBookmarked);
+  const toggleEntity = useBookmarkStore((s) => s.toggleEntity);
 
   const containerRef = useRef(null);
   const fgRef = useRef(null);
@@ -632,11 +640,24 @@ export default function IntelligenceGraphExplorer({ initialSearch }) {
         ) : (
           <div className="p-4 space-y-4">
             <div>
-              <div
-                className="font-mono-data inline-block text-[10px] uppercase tracking-wide px-1.5 py-0.5 mb-1"
-                style={{ color: NODE_COLORS[selectedNode.type], borderColor: NODE_COLORS[selectedNode.type], borderWidth: 1 }}
-              >
-                {selectedNode.type}
+              <div className="flex items-center justify-between gap-2">
+                <div
+                  className="font-mono-data inline-block text-[10px] uppercase tracking-wide px-1.5 py-0.5 mb-1"
+                  style={{ color: NODE_COLORS[selectedNode.type], borderColor: NODE_COLORS[selectedNode.type], borderWidth: 1 }}
+                >
+                  {selectedNode.type}
+                </div>
+                {isAuthenticated && (selectedNode.type === 'country' || selectedNode.type === 'conflict') && selectedNode.raw?.id != null && (
+                  <button
+                    onClick={() =>
+                      toggleEntity(selectedNode.type.toUpperCase(), String(selectedNode.raw.id), selectedNode.name)
+                    }
+                    className="font-mono-data text-xs px-2 py-1 border transition-colors hover:border-[var(--accent)]"
+                    style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}
+                  >
+                    {isEntityBookmarked(selectedNode.type.toUpperCase(), String(selectedNode.raw.id)) ? '★ Watching' : '☆ Watch'}
+                  </button>
+                )}
               </div>
               <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{selectedNode.name}</h3>
             </div>

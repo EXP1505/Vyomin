@@ -93,7 +93,15 @@ function Scene({
 }
 
 export const Globe = forwardRef(function Globe(
-  { flights = [], activeTypes = new Set(), selectedCallsign, onSelectTrack, compact = false, conflicts = [] },
+  {
+    flights = [],
+    activeTypes = new Set(),
+    selectedCallsign,
+    onSelectTrack,
+    compact = false,
+    conflicts = [],
+    disableTouchZoom = false,
+  },
   ref
 ) {
   const controlsRef = useRef();
@@ -158,6 +166,9 @@ export const Globe = forwardRef(function Globe(
           dampingFactor={0.08}
           autoRotate={autoRotate}
           autoRotateSpeed={0.4}
+          // Two-finger pinch normally dollies (zooms); mapping it to rotate instead removes
+          // touch-zoom while leaving mouse-wheel zoom (enableZoom) untouched for desktop.
+          touches={disableTouchZoom ? { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.ROTATE } : undefined}
         />
       )}
       {compact && <OrbitControls enableZoom={false} enablePan={false} enableRotate={false} autoRotate autoRotateSpeed={1.2} />}
