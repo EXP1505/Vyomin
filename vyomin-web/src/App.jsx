@@ -5,10 +5,12 @@ import { RadarView } from './components/RadarView';
 import { FinanceDashboard } from './components/FinanceDashboard';
 import IntelligenceGraphExplorer from './pages/IntelligenceGraphExplorer';
 import { AppLayout } from './layouts/AppLayout';
+import { CursorTrail } from './components/design/CursorTrail';
 
 function App() {
   return (
     <BrowserRouter>
+      <CursorTrail />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route element={<AppLayout />}>
