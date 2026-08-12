@@ -23,6 +23,14 @@ spring:
     authentication:
       username: ${NEO4J_AURA_USERNAME}
       password: ${NEO4J_AURA_PASSWORD}
+    pool:
+      # AuraDB caps concurrent connections well below the driver's own default (100) - keep the
+      # local pool under that ceiling so we get a clean "wait for a slot" instead of AuraDB
+      # resetting connections out from under us mid-query ("Failed to write messages").
+      max-connection-pool-size: 20
+      connection-acquisition-timeout: 30s
+      max-connection-lifetime: 30m
+      idle-time-before-connection-test: 30s
 gdelt:
   manifest:
     url: ${GDELT_MANIFEST_URL:http://data.gdeltproject.org/gdeltv2/lastupdate.txt}
