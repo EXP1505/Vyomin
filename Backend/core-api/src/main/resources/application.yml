@@ -34,6 +34,7 @@ spring:
 gdelt:
   manifest:
     url: ${GDELT_MANIFEST_URL:http://data.gdeltproject.org/gdeltv2/lastupdate.txt}
+    master-list-url: ${GDELT_MASTER_LIST_URL:http://data.gdeltproject.org/gdeltv2/masterfilelist.txt}
   cameo:
     country:
       url: ${GDELT_CAMEO_COUNTRY_URL:http://data.gdeltproject.org/documentation/CAMEO.country.txt}
@@ -62,3 +63,20 @@ app:
 google:
   oauth:
     client-id: ${GOOGLE_CLIENT_ID:}
+vyomin:
+  analysis:
+    tickers: ${VYOMIN_ANALYSIS_TICKERS:LMT,RTX,NOC,GD,BA,XOM,CVX,USO,SPY}
+    backfill:
+      # Applied on top of GdeltIngestionService's live actor whitelist, on the raw -10..+10
+      # Goldstein scale (not the 0-100 mapped severityScore) - the live whitelist alone runs
+      # ~5-15k matching events/day, so a multi-month backfill needs a much tighter cut to stay a
+      # reasonable Postgres table size.
+      min-severity-abs: ${GDELT_BACKFILL_MIN_SEVERITY_ABS:5.0}
+      file-delay-ms: ${GDELT_BACKFILL_FILE_DELAY_MS:1500}
+      # Blank = default to the last 6 months ending today (see GdeltHistoricalBackfillService).
+      start-date: ${GDELT_BACKFILL_START_DATE:}
+      end-date: ${GDELT_BACKFILL_END_DATE:}
+stooq:
+  base-url: ${STOOQ_BASE_URL:https://stooq.com}
+  backfill:
+    ticker-delay-ms: ${STOOQ_TICKER_DELAY_MS:1500}

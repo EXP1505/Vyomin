@@ -224,7 +224,9 @@ public class GdeltIngestionService {
     private static final int COL_ACTIONGEO_LAT = 56;
     private static final int COL_ACTIONGEO_LONG = 57;
     private static final int COL_SOURCEURL = 60;
-    private static final int MIN_COLUMNS = 61;
+    // Package-private (not private): GdeltHistoricalBackfillService reuses this to validate rows
+    // from historical batch files the same way live ingestion does.
+    static final int MIN_COLUMNS = 61;
 
     private final ConflictRepository conflictRepository;
     private final CountryRepository countryRepository;
@@ -323,7 +325,7 @@ public class GdeltIngestionService {
 
         try {
             log.info("Fetching GDELT 2.0 Events...");
-            loadCameoLookupsIfNeeded();
+            ensureCameoLookupsLoaded();
 
             List<String> rows;
             try {
@@ -345,9 +347,7 @@ public class GdeltIngestionService {
                     failed++;
                     continue;
                 }
-                String actor1Country = cols[COL_ACTOR1_COUNTRY].trim();
-                String actor2Country = cols[COL_ACTOR2_COUNTRY].trim();
-                if (!WHITELIST_CODE_TO_NAME.containsKey(actor1Country) && !WHITELIST_CODE_TO_NAME.containsKey(actor2Country)) {
+                if (!isWhitelisted(cols)) {
                     continue;
                 }
                 whitelisted.add(cols);
@@ -452,11 +452,28 @@ public class GdeltIngestionService {
      * which requires 0-or-1 matches) throw IncorrectResultSizeDataAccessException on every future
      * row whose coarse key collided with an existing duplicate pair.
      */
-    private String buildDedupeKey(String[] cols) {
+    // Package-private (not private): GdeltHistoricalBackfillService reuses this instead of
+    // re-deriving actor whitelist membership itself.
+    boolean isWhitelisted(String[] cols) {
+        String actor1Country = cols[COL_ACTOR1_COUNTRY].trim();
+        String actor2Country = cols[COL_ACTOR2_COUNTRY].trim();
+        return WHITELIST_CODE_TO_NAME.containsKey(actor1Country) || WHITELIST_CODE_TO_NAME.containsKey(actor2Country);
+    }
+
+    // Package-private (not private): shared with GdeltHistoricalBackfillService so the dedupe key
+    // format is defined in exactly one place. See the javadoc on the original private version's
+    // history for why GLOBALEVENTID (not a composite actor/event/date key) is what's unique here.
+    String buildDedupeKey(String[] cols) {
         return cols[COL_GLOBALEVENTID].trim();
     }
 
-    private Conflict parseConflictFromRow(String[] cols, String dedupeKey, Map<String, Country> countryCache) {
+    /**
+     * Parses a whitelisted GDELT row into a source-agnostic DTO - no Neo4j/Country access here,
+     * just CAMEO/actor/date/severity field extraction, so this same method serves both the live
+     * Conflict path (via toConflict below) and the historical Postgres backfill path directly.
+     * Package-private so GdeltHistoricalBackfillService can call it.
+     */
+    ParsedConflictEvent parseRow(String[] cols, String dedupeKey) {
         String actor1Code = cols[COL_ACTOR1_COUNTRY].trim();
         String actor2Code = cols[COL_ACTOR2_COUNTRY].trim();
         String eventCodeRaw = cols[COL_EVENTCODE].trim();
@@ -483,52 +500,89 @@ public class GdeltIngestionService {
         Double lon = parseDoubleOrNull(cols[COL_ACTIONGEO_LONG]);
         LocalDate dateReported = parseSqlDate(sqlDateRaw);
 
-        Conflict conflict = new Conflict();
-        conflict.setGdeltEventId(dedupeKey);
-        conflict.setName(eventType + ": " + actor1Label + " - " + actor2Label);
-        conflict.setDescription(actor1Label + " " + eventType + " " + actor2Label
-                + (dateReported != null ? " on " + dateReported : ""));
-        conflict.setStartDate(dateReported);
-        conflict.setDateReported(dateReported);
-        conflict.setEventType(eventType);
-        conflict.setEventCode(eventCode);
-        conflict.setSeverityScore(severityScore);
-        conflict.setSeverity(String.valueOf(severityScore));
-        conflict.setTone(tone);
-        conflict.setLatitude(lat);
-        conflict.setLongitude(lon);
-        conflict.setActor1Name(actor1Label);
-        conflict.setActor1CountryCode(actor1Code.isBlank() ? null : actor1Code);
-        conflict.setActor1Type(actor1Type);
-        conflict.setActor2Name(actor2Label);
-        conflict.setActor2CountryCode(actor2Code.isBlank() ? null : actor2Code);
-        conflict.setActor2Type(actor2Type);
+        String name = eventType + ": " + actor1Label + " - " + actor2Label;
+        String description = actor1Label + " " + eventType + " " + actor2Label
+                + (dateReported != null ? " on " + dateReported : "");
 
         String sourceUrl = cols[COL_SOURCEURL].trim();
-        conflict.setSourceUrl(sourceUrl.isBlank() ? null : sourceUrl);
 
-        List<String> keywords = new ArrayList<>();
-        keywords.add(actor1Label);
-        keywords.add(actor2Label);
-        keywords.add(eventType);
-        conflict.setKeywords(keywords);
-
-        Set<Country> involved = conflict.getInvolvedCountries();
+        Set<String> involvedCountryNames = new java.util.LinkedHashSet<>();
         if (WHITELIST_CODE_TO_NAME.containsKey(actor1Code)) {
-            involved.add(getOrCreateCountryCached(actor1Label, countryCache));
+            involvedCountryNames.add(actor1Label);
         }
         if (WHITELIST_CODE_TO_NAME.containsKey(actor2Code)) {
-            involved.add(getOrCreateCountryCached(actor2Label, countryCache));
+            involvedCountryNames.add(actor2Label);
         }
 
         String actionGeoCode = cols[COL_ACTIONGEO_COUNTRYCODE].trim();
         String regionName = FIPS_TO_WHITELIST_NAME.get(actionGeoCode);
         if (regionName != null) {
-            conflict.setPrimaryRegion(regionName);
-            involved.add(getOrCreateCountryCached(regionName, countryCache));
+            involvedCountryNames.add(regionName);
+        }
+
+        return new ParsedConflictEvent(
+                dedupeKey,
+                dateReported,
+                eventType,
+                eventCode,
+                name,
+                description,
+                severityScore,
+                goldstein,
+                tone,
+                lat,
+                lon,
+                actor1Label,
+                actor1Code.isBlank() ? null : actor1Code,
+                actor1Type,
+                actor2Label,
+                actor2Code.isBlank() ? null : actor2Code,
+                actor2Type,
+                regionName,
+                sourceUrl.isBlank() ? null : sourceUrl,
+                List.of(actor1Label, actor2Label, eventType),
+                involvedCountryNames
+        );
+    }
+
+    /** Maps a parsed event onto a Conflict node, resolving/creating its INVOLVES Country relationships. */
+    private Conflict toConflict(ParsedConflictEvent event, Map<String, Country> countryCache) {
+        Conflict conflict = new Conflict();
+        conflict.setGdeltEventId(event.gdeltEventId());
+        conflict.setName(event.name());
+        conflict.setDescription(event.description());
+        conflict.setStartDate(event.eventDate());
+        conflict.setDateReported(event.eventDate());
+        conflict.setEventType(event.eventType());
+        conflict.setEventCode(event.eventCode());
+        conflict.setSeverityScore(event.severityScore());
+        conflict.setSeverity(String.valueOf(event.severityScore()));
+        conflict.setTone(event.tone());
+        conflict.setLatitude(event.latitude());
+        conflict.setLongitude(event.longitude());
+        conflict.setActor1Name(event.actor1Name());
+        conflict.setActor1CountryCode(event.actor1CountryCode());
+        conflict.setActor1Type(event.actor1Type());
+        conflict.setActor2Name(event.actor2Name());
+        conflict.setActor2CountryCode(event.actor2CountryCode());
+        conflict.setActor2Type(event.actor2Type());
+        conflict.setSourceUrl(event.sourceUrl());
+        conflict.setKeywords(new ArrayList<>(event.keywords()));
+        conflict.setPrimaryRegion(event.primaryRegion());
+
+        Set<Country> involved = conflict.getInvolvedCountries();
+        for (String countryName : event.involvedCountryNames()) {
+            Country country = getOrCreateCountryCached(countryName, countryCache);
+            if (country != null) {
+                involved.add(country);
+            }
         }
 
         return conflict;
+    }
+
+    private Conflict parseConflictFromRow(String[] cols, String dedupeKey, Map<String, Country> countryCache) {
+        return toConflict(parseRow(cols, dedupeKey), countryCache);
     }
 
     private List<String> downloadLatestEventRows() throws IOException {
@@ -560,7 +614,9 @@ public class GdeltIngestionService {
         return rows;
     }
 
-    private String unzipSingleEntry(byte[] zipBytes) throws IOException {
+    // Package-private (not private): GdeltHistoricalBackfillService reuses this to unzip each
+    // historical batch file - same single-CSV-entry zip format as the live manifest download.
+    String unzipSingleEntry(byte[] zipBytes) throws IOException {
         try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zipBytes))) {
             ZipEntry entry = zis.getNextEntry();
             if (entry == null) {
@@ -572,7 +628,10 @@ public class GdeltIngestionService {
         }
     }
 
-    private void loadCameoLookupsIfNeeded() {
+    // Package-private (not private): GdeltHistoricalBackfillService calls this before parsing so
+    // its eventType/actorType labels resolve through the same CAMEO lookups as live ingestion,
+    // instead of only ever falling back to the smaller built-in label maps.
+    void ensureCameoLookupsLoaded() {
         if (lookupsLoaded.get()) {
             return;
         }
