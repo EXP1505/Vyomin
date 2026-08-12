@@ -10,6 +10,13 @@ const API_BASE = 'http://localhost:8080/api/intel';
 const WS_URL = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
 const MAX_AUTO_RETRIES_PER_QUERY = 1;
 
+// Keep in sync with the Results panel's "w-72" and the Details panel's collapsed/expanded
+// widths below - the search bar needs these to center itself in the space actually left
+// over between the two side panels, not the full viewport width.
+const RESULTS_PANEL_WIDTH_PX = 288;
+const DETAILS_PANEL_WIDTH_COLLAPSED_PX = 320;
+const DETAILS_PANEL_WIDTH_EXPANDED = 'min(560px, 60vw)';
+
 // Company/Sector/Investor/Supply are hidden for now: GDELT (the only ingestion source wired
 // up today) only ever produces Conflict + Country nodes. Company/Sector have a thin Finnhub
 // path; Investor/Supply have no ingestion path at all. Re-add once there's a real data source.
@@ -200,6 +207,18 @@ export default function IntelligenceGraphExplorer() {
   }, []);
 
   const graphData = useMemo(() => buildGraphData(searchResponse?.results), [searchResponse]);
+
+  // Centers the search bar in whatever space is actually left between the Results panel (once
+  // docked) and the Details panel (once a node is selected), instead of the full graph width -
+  // otherwise a wide Details panel pushes the centered bar right under/behind it.
+  const searchBarLeft = useMemo(() => {
+    if (!hasSearched) return '50%';
+    const resultsWidth = `${RESULTS_PANEL_WIDTH_PX}px`;
+    const detailsWidth = selectedNode
+      ? (detailsExpanded ? DETAILS_PANEL_WIDTH_EXPANDED : `${DETAILS_PANEL_WIDTH_COLLAPSED_PX}px`)
+      : '0px';
+    return `calc(50% + (${resultsWidth} - ${detailsWidth}) / 2)`;
+  }, [hasSearched, selectedNode, detailsExpanded]);
 
   // A fresh search reuses the same ForceGraph instance with new data - let the new layout
   // re-tune its own forces instead of skipping because the previous graph already did.
@@ -492,11 +511,11 @@ export default function IntelligenceGraphExplorer() {
 
       {/* Search bar: centered overlay on first load, docks to the top once a search runs */}
       <div
-        className="absolute left-1/2 z-20 w-full max-w-2xl px-6 transition-all duration-500 ease-out"
+        className="absolute z-20 w-full max-w-2xl px-6 transition-all duration-500 ease-out"
         style={
           hasSearched
-            ? { top: '1.25rem', transform: 'translateX(-50%)' }
-            : { top: '50%', transform: 'translate(-50%, -50%)' }
+            ? { left: searchBarLeft, top: '1.25rem', transform: 'translateX(-50%)' }
+            : { left: searchBarLeft, top: '50%', transform: 'translate(-50%, -50%)' }
         }
       >
         {!hasSearched && (
