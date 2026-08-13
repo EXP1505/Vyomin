@@ -55,8 +55,11 @@ public class GdeltEventHistory {
     @Column(name = "source_url")
     private String sourceUrl;
 
-    // No @Builder.Default/@PrePersist needed - rows are written via a native upsert query that
-    // never lists this column, so Postgres' own DEFAULT now() (below) populates it.
-    @Column(name = "ingested_at", columnDefinition = "TIMESTAMP DEFAULT now()", insertable = false, updatable = false)
+    // Plain column, no columnDefinition: a "TIMESTAMP DEFAULT now()" columnDefinition makes
+    // Hibernate's ddl-auto=update re-issue "ALTER COLUMN ingested_at SET DATA TYPE TIMESTAMP
+    // DEFAULT now()" on every boot, which Postgres rejects (DEFAULT isn't valid in a SET DATA
+    // TYPE clause). GdeltEventHistoryRepository.upsert() sets this column explicitly with now()
+    // instead, so no DB-level default is needed.
+    @Column(name = "ingested_at")
     private Instant ingestedAt;
 }
