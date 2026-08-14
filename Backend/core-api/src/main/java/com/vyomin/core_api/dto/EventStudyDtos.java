@@ -18,7 +18,18 @@ public class EventStudyDtos {
     ) {
     }
 
-    public record WindowSummary(int windowDays, int n, BigDecimal meanReturn, BigDecimal hitRate, BigDecimal coverage) {
+    /**
+     * independentWindowCount is the trustworthy sample size: the count of DISTINCT trading-day
+     * baselines (t0) with a non-null basket return for this window - dyad-events sharing a t0
+     * (e.g. a Saturday and the Monday after it both resolving to the same prior trading day)
+     * produce identical returns and must not be counted as separate observations.
+     *
+     * distinctEventCountThisWindow and totalArticleCount are descriptive only - "how much
+     * happened / how much coverage" - never a substitute for independentWindowCount as a sample
+     * size.
+     */
+    public record WindowSummary(int windowDays, int independentWindowCount, BigDecimal meanReturn, BigDecimal hitRate,
+                                 int distinctEventCountThisWindow, long totalArticleCount, BigDecimal coverage) {
     }
 
     public record EventResult(LocalDate eventDate, String actor1, String actor2, long articleCount,

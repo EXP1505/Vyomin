@@ -80,6 +80,21 @@ public class ForwardReturnService {
     }
 
     /**
+     * The trading-day baseline t0 that forwardReturn() resolves internally: the last trading day
+     * &lt;= eventDate (SPY's trade_date calendar). Exposed so callers that need to cluster/dedupe by
+     * baseline (e.g. EventStudyService, which otherwise can't tell two different event dates
+     * resolve to the same t0) don't have to re-implement this lookup themselves.
+     *
+     * Returns null under the same condition forwardReturn() does: eventDate is before the trading
+     * calendar starts.
+     */
+    public LocalDate resolveBaselineTradingDay(LocalDate eventDate) {
+        List<LocalDate> tradingDays = tradingDays();
+        int t0Index = lastTradingDayIndexOnOrBefore(tradingDays, eventDate);
+        return t0Index < 0 ? null : tradingDays.get(t0Index);
+    }
+
+    /**
      * Equal-weight average of forwardReturn() across tickers for the same event and horizon,
      * skipping tickers that return null. contributingCount lets callers tell "nobody had data"
      * apart from "the basket's return happened to be low."
