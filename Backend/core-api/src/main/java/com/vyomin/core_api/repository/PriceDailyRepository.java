@@ -15,6 +15,8 @@ public interface PriceDailyRepository extends JpaRepository<PriceDaily, PriceDai
 
     List<PriceDaily> findByTickerOrderByTradeDateAsc(String ticker);
 
+    List<PriceDaily> findByTickerAndTradeDateBetweenOrderByTradeDateAsc(String ticker, LocalDate from, LocalDate to);
+
     // Native upsert instead of save() so re-running a backfill is a plain idempotent write
     // (INSERT .. ON CONFLICT DO UPDATE) rather than a select-then-insert/update per row.
     @Modifying

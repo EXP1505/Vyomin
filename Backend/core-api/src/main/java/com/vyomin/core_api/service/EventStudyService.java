@@ -37,6 +37,9 @@ public class EventStudyService {
     private static final String TRADING_CALENDAR_TICKER = "SPY";
     private static final MathContext AGG_MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_UP);
     private static final int BOOTSTRAP_ITERATIONS = 10_000;
+    // At or above this coverage, the real event days already occupy nearly the whole trading
+    // calendar in range - there's no meaningful "random" subset of days left to bootstrap against.
+    private static final BigDecimal SATURATED_COVERAGE_THRESHOLD = new BigDecimal("0.98");
 
     private final GdeltEventHistoryRepository gdeltEventHistoryRepository;
     private final PriceDailyRepository priceDailyRepository;
@@ -165,13 +168,26 @@ public class EventStudyService {
                 ? BigDecimal.ZERO
                 : BigDecimal.valueOf(independentWindowCount).divide(BigDecimal.valueOf(totalDistinctTradingDaysInRange), AGG_MATH_CONTEXT);
 
-        BigDecimal[] bootstrap = independentWindowCount > 0
-                ? runBootstrap(meanReturn, independentWindowCount, eligiblePool)
-                : new BigDecimal[]{null, null, null};
+        BigDecimal[] bootstrap;
+        String bootstrapStatus;
+        String bootstrapStatusReason;
+        if (independentWindowCount == 0) {
+            bootstrap = new BigDecimal[]{null, null, null};
+            bootstrapStatus = "NO_DATA";
+            bootstrapStatusReason = "No qualifying events with computable returns for this window.";
+        } else if (coverage.compareTo(SATURATED_COVERAGE_THRESHOLD) >= 0) {
+            bootstrap = new BigDecimal[]{null, null, null};
+            bootstrapStatus = "INVALID_SATURATED";
+            bootstrapStatusReason = "Event coverage too high (>=98%) for a valid random comparison.";
+        } else {
+            bootstrap = runBootstrap(meanReturn, independentWindowCount, eligiblePool);
+            bootstrapStatus = "OK";
+            bootstrapStatusReason = null;
+        }
 
         return new WindowSummary(windowDays, independentWindowCount, meanReturn, hitRate,
                 distinctEventCountThisWindow, totalArticleCount, coverage,
-                bootstrap[0], bootstrap[1], bootstrap[2]);
+                bootstrap[0], bootstrap[1], bootstrap[2], bootstrapStatus, bootstrapStatusReason);
     }
 
     /**

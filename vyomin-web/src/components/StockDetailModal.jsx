@@ -14,7 +14,7 @@ const SkeletonLine = ({ className = '' }) => (
   <div className={`h-3 bg-slate-800/70 rounded animate-pulse ${className}`} />
 );
 
-function CandlestickSvgChart({ chartData }) {
+export function CandlestickSvgChart({ chartData, markers = [] }) {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hover, setHover] = useState({ idx: null, x: 0, y: 0 });
@@ -101,6 +101,31 @@ function CandlestickSvgChart({ chartData }) {
   const step = innerW / Math.max(1, candles.length);
   const bodyW = Math.max(3, step * 0.6);
 
+  // Maps each marker (epoch-seconds) to the nearest candle's x-position. Markers whose closest
+  // candle is more than ~1.5 days away are dropped rather than snapped to an edge candle - a
+  // marker for an event date that isn't actually within the visible chart window shouldn't be
+  // drawn as if it were, since that would misrepresent where the event happened relative to price.
+  const markerPositions = useMemo(() => {
+    if (!markers?.length || !candles.length) return [];
+    const oneDaySeconds = 86400;
+    const positions = [];
+    for (const ts of markers) {
+      let closestIdx = -1;
+      let closestDiff = Infinity;
+      candles.forEach((c, i) => {
+        const diff = Math.abs((c.ts ?? 0) - ts);
+        if (diff < closestDiff) {
+          closestDiff = diff;
+          closestIdx = i;
+        }
+      });
+      if (closestIdx !== -1 && closestDiff <= oneDaySeconds * 1.5) {
+        positions.push(closestIdx);
+      }
+    }
+    return [...new Set(positions)];
+  }, [markers, candles]);
+
   return (
     <div
       ref={containerRef}
@@ -144,6 +169,24 @@ function CandlestickSvgChart({ chartData }) {
               <line x1={xCenter} x2={xCenter} y1={wickTop} y2={wickBottom} stroke={color} strokeWidth={1.5} />
               <rect x={bodyX} y={bodyTop} width={bodyW} height={bodyH} fill={color} stroke={color} strokeWidth={0.5} />
             </g>
+          );
+        })}
+
+        {/* Event markers */}
+        {markerPositions.map((idx) => {
+          const xCenter = padding.left + step * (idx + 0.5);
+          return (
+            <line
+              key={`marker-${idx}`}
+              x1={xCenter}
+              x2={xCenter}
+              y1={padding.top}
+              y2={padding.top + innerH}
+              stroke="#ffb020"
+              strokeWidth={1}
+              strokeDasharray="2 3"
+              opacity={0.75}
+            />
           );
         })}
 

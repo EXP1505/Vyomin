@@ -4,6 +4,7 @@ import { Home } from './pages/Home';
 import { RadarView } from './components/RadarView';
 import { FinanceDashboard } from './components/FinanceDashboard';
 import IntelligenceGraphExplorer from './pages/IntelligenceGraphExplorer';
+import EventStudyAnalysis from './pages/EventStudyAnalysis';
 import { AppLayout } from './layouts/AppLayout';
 import { CursorTrail } from './components/design/CursorTrail';
 
@@ -18,6 +19,7 @@ function App() {
           <Route path="/radar" element={<RadarView />} />
           <Route path="/graph" element={<IntelligenceGraphExplorer />} />
           <Route path="/finance" element={<FinanceDashboard fullPage />} />
+          <Route path="/analysis" element={<EventStudyAnalysis />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
