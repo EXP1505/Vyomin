@@ -72,7 +72,10 @@ vyomin:
       # ~5-15k matching events/day, so a multi-month backfill needs a much tighter cut to stay a
       # reasonable Postgres table size.
       min-severity-abs: ${GDELT_BACKFILL_MIN_SEVERITY_ABS:5.0}
-      file-delay-ms: ${GDELT_BACKFILL_FILE_DELAY_MS:1500}
+      # Per-worker pacing, not global: with `concurrency` workers each sleeping this long between
+      # their own files, aggregate request rate is roughly concurrency / file-delay-ms.
+      file-delay-ms: ${GDELT_BACKFILL_FILE_DELAY_MS:400}
+      concurrency: ${GDELT_BACKFILL_CONCURRENCY:6}
       # Blank = default to the last 6 months ending today (see GdeltHistoricalBackfillService).
       start-date: ${GDELT_BACKFILL_START_DATE:}
       end-date: ${GDELT_BACKFILL_END_DATE:}

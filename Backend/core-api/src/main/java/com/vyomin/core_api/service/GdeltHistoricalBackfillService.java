@@ -1,7 +1,6 @@
 package com.vyomin.core_api.service;
 
-import com.vyomin.core_api.model.GdeltBackfillCheckpoint;
-import com.vyomin.core_api.repository.GdeltBackfillCheckpointRepository;
+import com.vyomin.core_api.repository.GdeltBackfillCompletedFileRepository;
 import com.vyomin.core_api.repository.GdeltEventHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,10 +16,18 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Backfills historical GDELT 2.0 Events into Postgres (gdelt_event_history) instead of Neo4j, so
@@ -34,6 +41,12 @@ import java.util.Map;
  * (vyomin.analysis.backfill.min-severity-abs, on the raw -10..+10 Goldstein scale) because the
  * live whitelist alone produces on the order of 5-15k matching events/day - backfilling months at
  * that density would be millions of rows.
+ *
+ * Files download/parse/save concurrently across a fixed worker pool (vyomin.analysis.backfill.
+ * concurrency) rather than one at a time, to cut wall-clock time on multi-month ranges. Progress
+ * is tracked as a SET of completed file URLs (gdelt_backfill_completed_file), not a single "last
+ * file" pointer - concurrent workers finish out of order, so a pointer can't safely represent
+ * "everything before this is done."
  */
 @Service
 @RequiredArgsConstructor
@@ -44,12 +57,11 @@ public class GdeltHistoricalBackfillService {
     private static final int MAX_ATTEMPTS = 2;
     private static final long RETRY_BACKOFF_MS = 3000;
     private static final int PROGRESS_LOG_INTERVAL_FILES = 100;
-    private static final Integer CHECKPOINT_ID = 1;
     private static final DateTimeFormatter FILE_TS_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final GdeltIngestionService gdeltIngestionService;
     private final GdeltEventHistoryRepository gdeltEventHistoryRepository;
-    private final GdeltBackfillCheckpointRepository checkpointRepository;
+    private final GdeltBackfillCompletedFileRepository completedFileRepository;
     private final RestClient restClient = buildRestClient();
 
     @Value("${gdelt.manifest.master-list-url}")
@@ -58,8 +70,14 @@ public class GdeltHistoricalBackfillService {
     @Value("${vyomin.analysis.backfill.min-severity-abs:5.0}")
     private double minSeverityAbs;
 
-    @Value("${vyomin.analysis.backfill.file-delay-ms:1500}")
+    // Reduced from the original sequential design's 1.5-2s: with `concurrency` workers each
+    // pacing themselves at this interval, aggregate request rate is what matters (roughly
+    // concurrency / fileDelayMs), not any single worker's own pacing.
+    @Value("${vyomin.analysis.backfill.file-delay-ms:400}")
     private long fileDelayMs;
+
+    @Value("${vyomin.analysis.backfill.concurrency:6}")
+    private int concurrency;
 
     @Value("${vyomin.analysis.backfill.start-date:}")
     private String configuredStartDate;
@@ -80,8 +98,8 @@ public class GdeltHistoricalBackfillService {
         LocalDate effectiveStart = from != null ? from
                 : (configuredStartDate.isBlank() ? effectiveEnd.minusMonths(6) : LocalDate.parse(configuredStartDate));
 
-        log.info("Starting GDELT historical backfill: range [{}, {}], min|goldstein|>={}",
-                effectiveStart, effectiveEnd, minSeverityAbs);
+        log.info("Starting GDELT historical backfill: range [{}, {}], min|goldstein|>={}, concurrency={}",
+                effectiveStart, effectiveEnd, minSeverityAbs, concurrency);
         gdeltIngestionService.ensureCameoLookupsLoaded();
 
         List<String> allFiles;
@@ -92,40 +110,58 @@ public class GdeltHistoricalBackfillService {
             return Map.of("status", "error", "error", e.getMessage());
         }
 
+        // completedFileRepository holds completed files from EVERY range ever run, not just this
+        // one - alreadyCompleted.size() alone would misleadingly report totals from unrelated
+        // ranges, so log the actual overlap with this run's file list instead.
+        Set<String> alreadyCompleted = new HashSet<>(completedFileRepository.findAllFileUrls());
+        List<String> remaining = allFiles.stream().filter(url -> !alreadyCompleted.contains(url)).toList();
         int totalFiles = allFiles.size();
-        int startIndex = resolveStartIndex(allFiles);
-        int filesToProcess = totalFiles - startIndex;
+        int filesToProcess = remaining.size();
+        log.info("{} files in range, {} already completed in this range, {} remaining to process",
+                totalFiles, totalFiles - filesToProcess, filesToProcess);
 
-        long totalInserted = 0;
-        long totalExcluded = 0;
-        long totalMalformed = 0;
-        long totalFailedRows = 0;
-        int filesDone = 0;
-        List<String> skippedFiles = new ArrayList<>();
+        AtomicInteger filesDone = new AtomicInteger(0);
+        AtomicLong totalInserted = new AtomicLong(0);
+        AtomicLong totalExcluded = new AtomicLong(0);
+        AtomicLong totalMalformed = new AtomicLong(0);
+        AtomicLong totalFailedRows = new AtomicLong(0);
+        List<String> skippedFiles = Collections.synchronizedList(new ArrayList<>());
         Instant runStart = Instant.now();
 
-        for (int i = startIndex; i < totalFiles; i++) {
-            String fileUrl = allFiles.get(i);
+        if (!remaining.isEmpty()) {
+            ExecutorService executor = Executors.newFixedThreadPool(concurrency);
             try {
-                FileOutcome outcome = processFile(fileUrl);
-                totalInserted += outcome.inserted();
-                totalExcluded += outcome.excluded();
-                totalMalformed += outcome.malformed();
-                totalFailedRows += outcome.failed();
-            } catch (Exception e) {
-                log.error("Skipping file after {} failed attempts: {} ({})", MAX_ATTEMPTS, fileUrl, e.getMessage());
-                skippedFiles.add(fileUrl);
-            }
-
-            saveCheckpoint(fileUrl);
-            filesDone++;
-
-            if (filesDone % PROGRESS_LOG_INTERVAL_FILES == 0 || i == totalFiles - 1) {
-                logProgress(filesDone, filesToProcess, totalInserted, runStart);
-            }
-
-            if (i < totalFiles - 1) {
-                sleepQuietly(fileDelayMs);
+                List<Future<?>> futures = new ArrayList<>(remaining.size());
+                for (String fileUrl : remaining) {
+                    futures.add(executor.submit(() -> {
+                        try {
+                            FileOutcome outcome = processFile(fileUrl);
+                            totalInserted.addAndGet(outcome.inserted());
+                            totalExcluded.addAndGet(outcome.excluded());
+                            totalMalformed.addAndGet(outcome.malformed());
+                            totalFailedRows.addAndGet(outcome.failed());
+                            completedFileRepository.markCompleted(fileUrl);
+                        } catch (Exception e) {
+                            log.error("Skipping file after {} failed attempts: {} ({})", MAX_ATTEMPTS, fileUrl, e.getMessage());
+                            skippedFiles.add(fileUrl);
+                        } finally {
+                            int done = filesDone.incrementAndGet();
+                            if (done % PROGRESS_LOG_INTERVAL_FILES == 0 || done == filesToProcess) {
+                                logProgress(done, filesToProcess, totalInserted.get(), runStart);
+                            }
+                            sleepQuietly(fileDelayMs);
+                        }
+                    }));
+                }
+                for (Future<?> future : futures) {
+                    try {
+                        future.get();
+                    } catch (Exception e) {
+                        log.error("Unexpected worker failure: {}", e.getMessage(), e);
+                    }
+                }
+            } finally {
+                executor.shutdown();
             }
         }
 
@@ -135,32 +171,16 @@ public class GdeltHistoricalBackfillService {
         summary.put("rangeStart", effectiveStart);
         summary.put("rangeEnd", effectiveEnd);
         summary.put("totalFilesInRange", totalFiles);
-        summary.put("filesProcessedThisRun", filesDone);
-        summary.put("rowsInserted", totalInserted);
-        summary.put("rowsExcludedBySeverity", totalExcluded);
-        summary.put("rowsMalformed", totalMalformed);
-        summary.put("rowsFailed", totalFailedRows);
-        summary.put("skippedFiles", skippedFiles);
+        summary.put("filesProcessedThisRun", filesDone.get());
+        summary.put("rowsInserted", totalInserted.get());
+        summary.put("rowsExcludedBySeverity", totalExcluded.get());
+        summary.put("rowsMalformed", totalMalformed.get());
+        summary.put("rowsFailed", totalFailedRows.get());
+        summary.put("skippedFiles", new ArrayList<>(skippedFiles));
         summary.put("elapsedSeconds", elapsed.toSeconds());
+        summary.put("concurrency", concurrency);
         log.info("GDELT historical backfill finished: {}", summary);
         return summary;
-    }
-
-    private int resolveStartIndex(List<String> allFiles) {
-        String checkpointFile = checkpointRepository.findById(CHECKPOINT_ID)
-                .map(GdeltBackfillCheckpoint::getLastCompletedFile)
-                .orElse(null);
-        if (checkpointFile == null) {
-            return 0;
-        }
-        int idx = allFiles.indexOf(checkpointFile);
-        if (idx < 0) {
-            log.warn("Checkpoint file {} not found in this run's file list (range/config changed?) - " +
-                    "starting from the beginning of the range instead of resuming", checkpointFile);
-            return 0;
-        }
-        log.info("Resuming from checkpoint: {} files already completed, {} remaining", idx + 1, allFiles.size() - idx - 1);
-        return idx + 1;
     }
 
     private record FileOutcome(int inserted, int excluded, int malformed, int failed) {
@@ -286,14 +306,6 @@ public class GdeltHistoricalBackfillService {
         matches.sort(Comparator.naturalOrder());
         log.info("Master file list: {} .export.CSV.zip entries in [{}, {}]", matches.size(), from, to);
         return matches;
-    }
-
-    private void saveCheckpoint(String fileUrl) {
-        GdeltBackfillCheckpoint checkpoint = checkpointRepository.findById(CHECKPOINT_ID)
-                .orElseGet(() -> GdeltBackfillCheckpoint.builder().id(CHECKPOINT_ID).build());
-        checkpoint.setLastCompletedFile(fileUrl);
-        checkpoint.setUpdatedAt(Instant.now());
-        checkpointRepository.save(checkpoint);
     }
 
     private void logProgress(int filesDone, int filesToProcess, long rowsInserted, Instant runStart) {

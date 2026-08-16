@@ -27,9 +27,16 @@ public class EventStudyDtos {
      * distinctEventCountThisWindow and totalArticleCount are descriptive only - "how much
      * happened / how much coverage" - never a substitute for independentWindowCount as a sample
      * size.
+     *
+     * bootstrapPValue/nullDistributionMean/nullDistributionStd test meanReturn against the null
+     * "this event type doesn't predict basket movement": a bootstrap distribution of the mean
+     * basket return on independentWindowCount random trading days in the same range. A small
+     * p-value means the real meanReturn sits in the tail of what random days alone would produce.
+     * All three are null when independentWindowCount is 0 (nothing to test).
      */
     public record WindowSummary(int windowDays, int independentWindowCount, BigDecimal meanReturn, BigDecimal hitRate,
-                                 int distinctEventCountThisWindow, long totalArticleCount, BigDecimal coverage) {
+                                 int distinctEventCountThisWindow, long totalArticleCount, BigDecimal coverage,
+                                 BigDecimal bootstrapPValue, BigDecimal nullDistributionMean, BigDecimal nullDistributionStd) {
     }
 
     public record EventResult(LocalDate eventDate, String actor1, String actor2, long articleCount,

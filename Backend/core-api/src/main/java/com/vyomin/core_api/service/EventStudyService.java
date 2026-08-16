@@ -17,9 +17,11 @@ import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Collapses raw gdelt_event_history rows into distinct dyad-level events (STEP 1), runs each
@@ -34,6 +36,7 @@ public class EventStudyService {
 
     private static final String TRADING_CALENDAR_TICKER = "SPY";
     private static final MathContext AGG_MATH_CONTEXT = new MathContext(10, RoundingMode.HALF_UP);
+    private static final int BOOTSTRAP_ITERATIONS = 10_000;
 
     private final GdeltEventHistoryRepository gdeltEventHistoryRepository;
     private final PriceDailyRepository priceDailyRepository;
@@ -84,7 +87,12 @@ public class EventStudyService {
                 if (r != null) {
                     dyadEventCountByWindow.merge(k, 1, Integer::sum);
                     articleCountByWindow.merge(k, event.getArticleCount(), Long::sum);
-                    if (t0 != null) {
+                    // t0 must fall within [dateFrom, dateTo] itself, not just the eventDate that
+                    // resolved to it - an event dated at/near dateFrom (e.g. a Sunday) can resolve
+                    // t0 to the last trading day BEFORE dateFrom (e.g. the prior Friday), which
+                    // countTradingDaysInRange's denominator correctly excludes. Without this check
+                    // that t0 still landed in the numerator, letting coverage exceed 1.0.
+                    if (t0 != null && !t0.isBefore(request.dateFrom()) && !t0.isAfter(request.dateTo())) {
                         // Same t0 always yields the same return for this basket/window (it's what
                         // basketForwardReturn resolves internally from eventDate) - putIfAbsent so
                         // a t0 shared by many dyad-events counts once, not once per dyad-event.
@@ -98,13 +106,42 @@ public class EventStudyService {
 
         long totalDistinctTradingDaysInRange = countTradingDaysInRange(request.dateFrom(), request.dateTo());
 
+        // Precomputed ONCE per request, outside the 10,000-iteration bootstrap loop below: every
+        // trading day in [dateFrom, dateTo] that has a computable basket return for window k. This
+        // is the null-hypothesis population ("a random trading day in this range") the real
+        // meanReturn gets tested against - restricted to non-null entries since a random draw that
+        // landed on a day with no computable return couldn't contribute to a "mean return" anyway.
+        Map<Integer, Map<LocalDate, BigDecimal>> eligiblePoolByWindow = precomputeEligiblePool(
+                request.basket(), request.dateFrom(), request.dateTo(), windows);
+
         List<WindowSummary> summary = new ArrayList<>();
         for (Integer k : windows) {
             summary.add(summarizeWindow(k, returnByT0PerWindow.get(k), dyadEventCountByWindow.get(k),
-                    articleCountByWindow.get(k), totalDistinctTradingDaysInRange));
+                    articleCountByWindow.get(k), totalDistinctTradingDaysInRange, eligiblePoolByWindow.get(k)));
         }
 
         return new EventStudyResponse(dyadEvents.size(), summary, events);
+    }
+
+    /** For each window k, every trading day in range with a non-null basket return - the bootstrap's null population. */
+    private Map<Integer, Map<LocalDate, BigDecimal>> precomputeEligiblePool(List<String> basket, LocalDate dateFrom,
+                                                                             LocalDate dateTo, List<Integer> windows) {
+        List<LocalDate> daysInRange = tradingDays().stream()
+                .filter(d -> !d.isBefore(dateFrom) && !d.isAfter(dateTo))
+                .toList();
+
+        Map<Integer, Map<LocalDate, BigDecimal>> byWindow = new LinkedHashMap<>();
+        for (Integer k : windows) {
+            Map<LocalDate, BigDecimal> byDay = new LinkedHashMap<>();
+            for (LocalDate day : daysInRange) {
+                BigDecimal r = forwardReturnService.basketForwardReturn(basket, day, k).averageReturn();
+                if (r != null) {
+                    byDay.put(day, r);
+                }
+            }
+            byWindow.put(k, byDay);
+        }
+        return byWindow;
     }
 
     /**
@@ -114,7 +151,7 @@ public class EventStudyService {
      */
     private WindowSummary summarizeWindow(int windowDays, Map<LocalDate, BigDecimal> returnByT0,
                                            int distinctEventCountThisWindow, long totalArticleCount,
-                                           long totalDistinctTradingDaysInRange) {
+                                           long totalDistinctTradingDaysInRange, Map<LocalDate, BigDecimal> eligiblePool) {
         int independentWindowCount = returnByT0.size();
         BigDecimal meanReturn = null;
         BigDecimal hitRate = null;
@@ -127,8 +164,64 @@ public class EventStudyService {
         BigDecimal coverage = totalDistinctTradingDaysInRange == 0
                 ? BigDecimal.ZERO
                 : BigDecimal.valueOf(independentWindowCount).divide(BigDecimal.valueOf(totalDistinctTradingDaysInRange), AGG_MATH_CONTEXT);
+
+        BigDecimal[] bootstrap = independentWindowCount > 0
+                ? runBootstrap(meanReturn, independentWindowCount, eligiblePool)
+                : new BigDecimal[]{null, null, null};
+
         return new WindowSummary(windowDays, independentWindowCount, meanReturn, hitRate,
-                distinctEventCountThisWindow, totalArticleCount, coverage);
+                distinctEventCountThisWindow, totalArticleCount, coverage,
+                bootstrap[0], bootstrap[1], bootstrap[2]);
+    }
+
+    /**
+     * Bootstraps the null "this event type doesn't predict basket movement": draws
+     * BOOTSTRAP_ITERATIONS random samples of size independentWindowCount (without replacement)
+     * from eligiblePool's returns, averages each sample, and compares realMeanReturn's percentile
+     * rank within that null distribution. All eligiblePool lookups happen against the map
+     * precomputed once in precomputeEligiblePool() - no DB calls inside this loop.
+     *
+     * Returns [pValue, nullDistributionMean, nullDistributionStd].
+     */
+    private BigDecimal[] runBootstrap(BigDecimal realMeanReturn, int sampleSize, Map<LocalDate, BigDecimal> eligiblePool) {
+        double[] pool = eligiblePool.values().stream().mapToDouble(BigDecimal::doubleValue).toArray();
+        // Defensive only: the real independentWindowCount is itself a subset of eligiblePool
+        // (every real event day counted there also has a non-null return), so this should never
+        // trigger in practice, but caps the sample instead of throwing if pool is somehow smaller.
+        int n = Math.min(sampleSize, pool.length);
+        if (n == 0) {
+            return new BigDecimal[]{null, null, null};
+        }
+
+        double[] nullMeans = new double[BOOTSTRAP_ITERATIONS];
+        int[] indices = java.util.stream.IntStream.range(0, pool.length).toArray();
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
+        for (int iter = 0; iter < BOOTSTRAP_ITERATIONS; iter++) {
+            // Partial Fisher-Yates: randomly select n distinct indices without allocating a fresh
+            // array or list per iteration - valid uniform sampling regardless of the array's
+            // starting order, so reusing/mutating `indices` across iterations is safe.
+            double sum = 0;
+            for (int i = 0; i < n; i++) {
+                int j = i + random.nextInt(indices.length - i);
+                int tmp = indices[i];
+                indices[i] = indices[j];
+                indices[j] = tmp;
+                sum += pool[indices[i]];
+            }
+            nullMeans[iter] = sum / n;
+        }
+
+        double realMean = realMeanReturn.doubleValue();
+        long countLessOrEqual = Arrays.stream(nullMeans).filter(v -> v <= realMean).count();
+        double percentile = (double) countLessOrEqual / BOOTSTRAP_ITERATIONS;
+        double pValue = Math.min(2 * Math.min(percentile, 1 - percentile), 1.0);
+
+        double nullMean = Arrays.stream(nullMeans).average().orElse(0);
+        double variance = Arrays.stream(nullMeans).map(v -> (v - nullMean) * (v - nullMean)).sum() / (BOOTSTRAP_ITERATIONS - 1);
+        double nullStd = Math.sqrt(variance);
+
+        return new BigDecimal[]{BigDecimal.valueOf(pValue), BigDecimal.valueOf(nullMean), BigDecimal.valueOf(nullStd)};
     }
 
     private long countTradingDaysInRange(LocalDate dateFrom, LocalDate dateTo) {
