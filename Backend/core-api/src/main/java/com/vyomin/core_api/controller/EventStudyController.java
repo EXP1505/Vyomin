@@ -3,6 +3,8 @@ package com.vyomin.core_api.controller;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyRequest;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyResponse;
 import com.vyomin.core_api.dto.EventStudyDtos.PriceHistoryPoint;
+import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepRequest;
+import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepResponse;
 import com.vyomin.core_api.model.PriceDaily;
 import com.vyomin.core_api.repository.PriceDailyRepository;
 import com.vyomin.core_api.service.EventStudyService;
@@ -31,6 +33,11 @@ public class EventStudyController {
     @PostMapping("/event-study")
     public ResponseEntity<EventStudyResponse> runEventStudy(@RequestBody EventStudyRequest request) {
         return ResponseEntity.ok(eventStudyService.runEventStudy(request));
+    }
+
+    @PostMapping("/event-study-sweep")
+    public ResponseEntity<EventStudySweepResponse> runEventStudySweep(@RequestBody EventStudySweepRequest request) {
+        return ResponseEntity.ok(eventStudyService.runSweep(request));
     }
 
     @GetMapping("/price-history")

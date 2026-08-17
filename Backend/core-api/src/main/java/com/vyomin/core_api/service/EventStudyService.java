@@ -4,6 +4,9 @@ import com.vyomin.core_api.dto.EventStudyDtos.EventResult;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyRequest;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyResponse;
 import com.vyomin.core_api.dto.EventStudyDtos.WindowSummary;
+import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepRequest;
+import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepResponse;
+import com.vyomin.core_api.dto.EventStudySweepDtos.SweepResult;
 import com.vyomin.core_api.model.PriceDaily;
 import com.vyomin.core_api.repository.DyadEventProjection;
 import com.vyomin.core_api.repository.GdeltEventHistoryRepository;
@@ -18,6 +21,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +44,24 @@ public class EventStudyService {
     // At or above this coverage, the real event days already occupy nearly the whole trading
     // calendar in range - there's no meaningful "random" subset of days left to bootstrap against.
     private static final BigDecimal SATURATED_COVERAGE_THRESHOLD = new BigDecimal("0.98");
+    // Used by runSweep() when the caller doesn't supply countryPairs - a starting set of real
+    // interstate/dyadic conflict or tension pairs, not exhaustive. Callers can always override.
+    private static final List<List<String>> DEFAULT_COUNTRY_PAIRS = List.of(
+            List.of("USA", "CHN"),
+            List.of("RUS", "UKR"),
+            List.of("THA", "KHM"),
+            List.of("IND", "PAK"),
+            List.of("ISR", "PSE"),
+            List.of("ISR", "IRN"),
+            List.of("PRK", "KOR"),
+            List.of("ARM", "AZE"),
+            List.of("ETH", "ERI"),
+            List.of("SDN", "SSD"),
+            List.of("VEN", "COL"),
+            List.of("TWN", "CHN"),
+            List.of("USA", "RUS"),
+            List.of("USA", "IRN")
+    );
 
     private final GdeltEventHistoryRepository gdeltEventHistoryRepository;
     private final PriceDailyRepository priceDailyRepository;
@@ -124,6 +146,59 @@ public class EventStudyService {
         }
 
         return new EventStudyResponse(dyadEvents.size(), summary, events);
+    }
+
+    /**
+     * Runs runEventStudy() once per (eventType x countryPair) combination in the grid - same code
+     * path /api/analysis/event-study uses, just called repeatedly. Sequential; not performance-
+     * critical the way the GDELT backfill is. Excludes any combination where any requested window
+     * came back NO_DATA or INVALID_SATURATED (not a valid comparison), and ranks what's left by
+     * the lowest bootstrapPValue found across that combination's windows.
+     */
+    public EventStudySweepResponse runSweep(EventStudySweepRequest request) {
+        List<List<String>> countryPairs = (request.countryPairs() == null || request.countryPairs().isEmpty())
+                ? DEFAULT_COUNTRY_PAIRS : request.countryPairs();
+
+        // Known up front (a fixed grid, no early exit), so the Bonferroni threshold can be applied
+        // to each result as it's produced rather than in a second pass.
+        int totalCombinationsRun = request.eventTypes().size() * countryPairs.size();
+        BigDecimal correctedThreshold = new BigDecimal("0.05")
+                .divide(BigDecimal.valueOf(totalCombinationsRun), AGG_MATH_CONTEXT);
+
+        List<SweepResult> testable = new ArrayList<>();
+
+        for (String eventType : request.eventTypes()) {
+            for (List<String> pair : countryPairs) {
+                String actor1 = pair.get(0);
+                String actor2 = pair.get(1);
+
+                EventStudyResponse response = runEventStudy(new EventStudyRequest(
+                        eventType, actor1, actor2, request.dateFrom(), request.dateTo(),
+                        request.basket(), request.windows()));
+
+                boolean untestable = response.summary().stream().anyMatch(w ->
+                        "NO_DATA".equals(w.bootstrapStatus()) || "INVALID_SATURATED".equals(w.bootstrapStatus()));
+                if (untestable) {
+                    continue;
+                }
+
+                WindowSummary best = response.summary().stream()
+                        .min(Comparator.comparing(WindowSummary::bootstrapPValue))
+                        .orElse(null);
+                if (best == null) {
+                    continue;
+                }
+
+                boolean survivesCorrection = best.bootstrapPValue().compareTo(correctedThreshold) < 0;
+                testable.add(new SweepResult(eventType, actor1, actor2, best.windowDays(),
+                        best.bootstrapPValue(), survivesCorrection, response.summary()));
+            }
+        }
+
+        testable.sort(Comparator.comparing(SweepResult::bestPValue));
+
+        return new EventStudySweepResponse(totalCombinationsRun, testable.size(),
+                totalCombinationsRun, correctedThreshold, testable);
     }
 
     /** For each window k, every trading day in range with a non-null basket return - the bootstrap's null population. */
