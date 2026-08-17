@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Panel } from '../components/design/Panel';
 import { CandlestickSvgChart } from '../components/StockDetailModal';
+import { COUNTRIES } from '../data/countries';
 
-// GDELT's CAMEO root event types (01-20) - not exposed by any existing backend endpoint, so this
-// is just a frontend convenience list for the <datalist> below. eventType stays a free-text
-// field; this only offers suggestions, it doesn't validate or restrict input.
-const EVENT_TYPE_SUGGESTIONS = [
-  'Make Statement', 'Appeal', 'Express Intent to Cooperate', 'Consult',
-  'Engage in Diplomatic Cooperation', 'Engage in Material Cooperation', 'Provide Aid', 'Yield',
-  'Investigate', 'Demand', 'Disapprove', 'Reject', 'Threaten', 'Protest',
-  'Exhibit Force Posture', 'Reduce Relations', 'Coerce', 'Assault', 'Fight',
-  'Use Unconventional Mass Violence',
+// The 16 event_type values actually present in gdelt_event_history (verified via
+// `SELECT DISTINCT event_type FROM gdelt_event_history`, not the full 20 CAMEO root categories -
+// 4 of the low-Goldstein-intensity categories (Make Statement, Appeal, Investigate, Disapprove)
+// never appear because the backfill's min-severity-abs cut excludes them, so they're deliberately
+// left out here rather than offered as choices that would always return zero results.
+const EVENT_TYPES = [
+  'Assault', 'Coerce', 'Consult', 'Demand', 'Engage in Diplomatic Cooperation',
+  'Engage in Material Cooperation', 'Exhibit Force Posture', 'Express Intent to Cooperate',
+  'Fight', 'Protest', 'Provide Aid', 'Reduce Relations', 'Reject', 'Threaten',
+  'Use Unconventional Mass Violence', 'Yield',
 ];
 
 const WINDOWS = [1, 3, 5];
@@ -30,6 +32,126 @@ function Field({ label, children }) {
       {label}
       {children}
     </label>
+  );
+}
+
+const COUNTRY_CODE_TO_NAME = new Map(COUNTRIES.map((c) => [c.code, c.name]));
+
+// Minimal combobox: displays/types a country NAME but tracks/submits an ISO alpha-3 CODE via
+// onChange. No existing combobox/autocomplete library in this codebase (checked package.json),
+// so this is hand-built - input + absolutely-positioned suggestion list, matching the existing
+// dark/tactical inputStyle. Non-matching free text just clears the tracked code (submits nothing
+// for that field) rather than blocking submission - simplest option the task allows, and actor
+// fields are already optional so an empty code is a normal, valid state.
+function CountryAutocomplete({ value, onChange, placeholder }) {
+  const [inputText, setInputText] = useState(() => COUNTRY_CODE_TO_NAME.get(value) || value || '');
+  const [open, setOpen] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(-1);
+  const containerRef = useRef(null);
+
+  // Sync display text if the code changes from outside (e.g. initial form state).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInputText(COUNTRY_CODE_TO_NAME.get(value) || value || '');
+  }, [value]);
+
+  const matches = useMemo(() => {
+    const q = inputText.trim().toLowerCase();
+    if (!q) return [];
+    return COUNTRIES.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [inputText]);
+
+  useEffect(() => {
+    const onDocMouseDown = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, []);
+
+  const selectCountry = (c) => {
+    setInputText(c.name);
+    onChange(c.code);
+    setOpen(false);
+    setHighlightIndex(-1);
+  };
+
+  const handleChange = (e) => {
+    const text = e.target.value;
+    setInputText(text);
+    setOpen(true);
+    setHighlightIndex(-1);
+    const exact = COUNTRIES.find((c) => c.name.toLowerCase() === text.trim().toLowerCase());
+    onChange(exact ? exact.code : '');
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open || matches.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.min(matches.length - 1, i + 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.max(0, i - 1));
+    } else if (e.key === 'Enter') {
+      if (highlightIndex >= 0) {
+        e.preventDefault();
+        selectCountry(matches[highlightIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
+  const hasText = inputText.trim().length > 0;
+  const hasCode = value && value.trim().length > 0;
+  const showInvalidHint = hasText && !hasCode && matches.length === 0;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        value={inputText}
+        onChange={handleChange}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        role="combobox"
+        aria-expanded={open && matches.length > 0}
+        aria-autocomplete="list"
+        autoComplete="off"
+        className="font-mono-data border px-3 py-2 text-sm focus:outline-none w-full"
+        style={inputStyle}
+      />
+      {open && matches.length > 0 && (
+        <ul
+          className="absolute z-20 mt-1 w-full border max-h-56 overflow-y-auto"
+          style={{ background: 'var(--panel)', borderColor: 'var(--hairline)' }}
+        >
+          {matches.map((c, i) => (
+            <li
+              key={c.code}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                selectCountry(c);
+              }}
+              onMouseEnter={() => setHighlightIndex(i)}
+              className="px-3 py-2 text-sm cursor-pointer font-mono-data"
+              style={{
+                color: 'var(--text)',
+                background: i === highlightIndex ? 'var(--accent-soft)' : 'transparent',
+              }}
+            >
+              {c.name} <span style={{ color: 'var(--text-faint)' }}>({c.code})</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {showInvalidHint && (
+        <div className="text-[11px] mt-1" style={{ color: 'var(--text-faint)' }}>
+          No matching country — this field will be left blank.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -855,37 +977,32 @@ export default function EventStudyAnalysis() {
 
         <form onSubmit={runAnalysis} className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <Field label="Event type">
-            <input
-              list="event-type-suggestions"
+            <select
+              required
               value={form.eventType}
               onChange={(e) => setForm({ ...form, eventType: e.target.value })}
               className="font-mono-data border px-3 py-2 text-sm focus:outline-none"
               style={inputStyle}
-            />
-            <datalist id="event-type-suggestions">
-              {EVENT_TYPE_SUGGESTIONS.map((t) => (
-                <option key={t} value={t} />
+            >
+              {EVENT_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
               ))}
-            </datalist>
+            </select>
           </Field>
 
           <Field label="Actor 1 country (optional)">
-            <input
+            <CountryAutocomplete
               value={form.actor1CountryCode}
-              onChange={(e) => setForm({ ...form, actor1CountryCode: e.target.value })}
-              placeholder="e.g. USA"
-              className="font-mono-data border px-3 py-2 text-sm focus:outline-none"
-              style={inputStyle}
+              onChange={(code) => setForm({ ...form, actor1CountryCode: code })}
+              placeholder="e.g. United States"
             />
           </Field>
 
           <Field label="Actor 2 country (optional)">
-            <input
+            <CountryAutocomplete
               value={form.actor2CountryCode}
-              onChange={(e) => setForm({ ...form, actor2CountryCode: e.target.value })}
-              placeholder="e.g. CHN"
-              className="font-mono-data border px-3 py-2 text-sm focus:outline-none"
-              style={inputStyle}
+              onChange={(code) => setForm({ ...form, actor2CountryCode: code })}
+              placeholder="e.g. China"
             />
           </Field>
 
