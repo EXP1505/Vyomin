@@ -18,6 +18,43 @@ const EVENT_TYPES = [
 
 const WINDOWS = [1, 3, 5];
 
+// Matches EventStudyService.DEFAULT_COUNTRY_PAIRS on the backend, in the same order - used to
+// size the combination-count preview AND to name each simulated log line during the loading
+// state (the sweep request itself never sends countryPairs; the backend applies this same list
+// server-side). Purely presentational: if the backend's default list ever changes, this display
+// copy would drift, but there's no API that exposes it to read back.
+const SWEEP_DEFAULT_PAIRS = [
+  ['USA', 'CHN'], ['RUS', 'UKR'], ['THA', 'KHM'], ['IND', 'PAK'], ['ISR', 'PSE'], ['ISR', 'IRN'],
+  ['PRK', 'KOR'], ['ARM', 'AZE'], ['ETH', 'ERI'], ['SDN', 'SSD'], ['VEN', 'COL'], ['TWN', 'CHN'],
+  ['USA', 'RUS'], ['USA', 'IRN'],
+];
+const SWEEP_DEFAULT_PAIR_COUNT = SWEEP_DEFAULT_PAIRS.length;
+
+// Observed in backend testing: ~1.4s per combination (10,000-iteration bootstrap x up to 3
+// windows). Drives both the runtime estimate shown in the live preview and the pacing of the
+// simulated per-combination log reveal during loading (the backend returns one lump response,
+// not incremental progress, so the reveal is client-side pacing dressed up to look live).
+const SWEEP_MS_PER_COMBO = 1400;
+
+const EVENT_TYPE_DESCRIPTIONS = {
+  'Assault': 'A physical attack, short of open combat.',
+  'Fight': 'Armed clashes or direct combat.',
+  'Coerce': 'Threats or pressure tactics to force a change in behavior.',
+  'Consult': 'Diplomatic meetings or talks.',
+  'Demand': 'A formal demand made of another party.',
+  'Engage in Diplomatic Cooperation': 'Positive diplomatic gestures — visits, agreements, praise.',
+  'Engage in Material Cooperation': 'Aid, trade, or joint action between parties.',
+  'Exhibit Force Posture': 'Military mobilization or show of force, without attacking.',
+  'Express Intent to Cooperate': 'A stated willingness to work together.',
+  'Protest': 'Public demonstrations.',
+  'Provide Aid': 'Humanitarian or material assistance.',
+  'Reduce Relations': 'Downgrading diplomatic or economic ties.',
+  'Reject': 'Refusing a demand or proposal.',
+  'Threaten': 'A verbal or written threat.',
+  'Use Unconventional Mass Violence': 'Terrorism or mass-casualty violence.',
+  'Yield': 'Making a concession or complying with a demand.',
+};
+
 const inputStyle = { background: 'var(--panel-2)', borderColor: 'var(--hairline)', color: 'var(--text)' };
 
 function formatPercent(n, digits = 3) {
@@ -155,6 +192,80 @@ function CountryAutocomplete({ value, onChange, placeholder }) {
   );
 }
 
+// Shared green-filled/gray-outline badge style for "this passed a significance bar" vs not -
+// used by bootstrapBadge below (single-query per-window badge) and reused as-is by the sweep
+// results table's "Survives correction" column, so both stay visually identical by construction
+// rather than by two separately-maintained copies of the same colors.
+function significanceStyle(pass) {
+  return pass
+    ? { color: 'var(--positive)', borderColor: 'var(--positive)', background: 'rgba(53,214,184,0.1)' }
+    : { color: 'var(--text-dim)', borderColor: 'var(--hairline)' };
+}
+
+// Step 1 of the sweep flow: one clickable card per event type (replaces a checkbox grid) - amber
+// border/glow when selected, matching the app's existing accent language rather than inventing a
+// new "selected" treatment.
+function EventTypeCard({ type, selected, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={selected}
+      className="text-left p-3 border transition-colors"
+      style={{
+        borderColor: selected ? 'var(--accent)' : 'var(--hairline)',
+        background: selected ? 'var(--accent-soft)' : 'var(--panel-2)',
+        boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
+      }}
+    >
+      <div className="text-sm font-semibold" style={{ color: selected ? 'var(--accent)' : 'var(--text)' }}>
+        {type}
+      </div>
+      <div className="text-xs mt-1 leading-snug" style={{ color: 'var(--text-faint)' }}>
+        {EVENT_TYPE_DESCRIPTIONS[type]}
+      </div>
+    </button>
+  );
+}
+
+// Terminal/log-feed visual, matching Home's LiveSignalFeed aesthetic (monospace, accent ">"
+// prefix, newest row animates in) - but appending downward and auto-scrolling to the bottom
+// instead of prepending to the top, since this reads as a single running process finishing line
+// by line rather than a merged multi-source feed.
+function SweepLogFeed({ rows }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [rows]);
+
+  return (
+    <div ref={containerRef} className="h-48 overflow-y-auto font-mono-data text-xs pr-1">
+      {rows.length === 0 && <div style={{ color: 'var(--text-faint)' }}>Initializing sweep…</div>}
+      {rows.map((row, i) => (
+        <div
+          key={row.id}
+          className="border-b py-1"
+          style={{
+            borderColor: 'var(--hairline)',
+            color: 'var(--text-dim)',
+            animation: i === rows.length - 1 ? 'vyomin-feed-in 0.3s ease-out' : undefined,
+          }}
+        >
+          <span style={{ color: 'var(--accent)' }}>{'>'}</span> Testing {row.eventType}: {row.actor1} ↔ {row.actor2}...
+        </div>
+      ))}
+      <style>{`
+        @keyframes vyomin-feed-in {
+          0% { opacity: 0; transform: translateY(-4px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // bootstrapStatus -> badge text/style + whether the p-value figure is trustworthy to show.
 // Three visually distinct badge treatments (filled green / gray outline / amber outline / red
 // outline) so INVALID_SATURATED and NO_DATA can never be mistaken for a real "not significant"
@@ -179,9 +290,7 @@ function bootstrapBadge(w) {
   const significant = hasP && w.bootstrapPValue < 0.05;
   return {
     label: significant ? 'Statistically significant' : 'Not statistically distinguishable from random',
-    style: significant
-      ? { color: 'var(--positive)', borderColor: 'var(--positive)', background: 'rgba(53,214,184,0.1)' }
-      : { color: 'var(--text-dim)', borderColor: 'var(--hairline)' },
+    style: significanceStyle(significant),
     showPValue: hasP,
   };
 }
@@ -878,6 +987,16 @@ export default function EventStudyAnalysis() {
   const [chartLoading, setChartLoading] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
+  const [sweepEventTypes, setSweepEventTypes] = useState(['Fight', 'Assault']);
+  const [sweepLoading, setSweepLoading] = useState(false);
+  const [sweepError, setSweepError] = useState(null);
+  const [sweepResult, setSweepResult] = useState(null);
+  // Client-side simulated progress log for the loading state - see runSweep/SWEEP_MS_PER_COMBO.
+  const [sweepLogRows, setSweepLogRows] = useState([]);
+  // { row, w } - the clicked SweepResult plus its bestWindow's WindowSummary, fed straight into
+  // the same ExplainModalContent the single-query WindowCard modal uses.
+  const [sweepModalRow, setSweepModalRow] = useState(null);
+
   const basketList = useMemo(
     () => form.basket.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
     [form.basket]
@@ -941,6 +1060,86 @@ export default function EventStudyAnalysis() {
       setLoading(false);
     }
   };
+
+  const toggleSweepEventType = (t) => {
+    setSweepEventTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+  };
+
+  // Step 2's live preview - recomputed on every card click, no button required.
+  const sweepComboCount = sweepEventTypes.length * SWEEP_DEFAULT_PAIR_COUNT;
+  const sweepEstimatedSeconds = Math.round((sweepComboCount * SWEEP_MS_PER_COMBO) / 1000);
+
+  // Reuses form.dateFrom/dateTo/basket - the same state the single-query form above edits - so
+  // there's exactly one date-range/basket to keep in sync, not two drifting copies. countryPairs
+  // is omitted so the backend falls back to its own default list (v1: no custom-pair UI yet), but
+  // that same default list is mirrored client-side as SWEEP_DEFAULT_PAIRS purely to name the
+  // simulated log lines below with the real pairs the backend will actually test, in the same
+  // eventType-outer/pair-inner order runSweep() iterates server-side.
+  const runSweep = async (e) => {
+    e.preventDefault();
+    setSweepLoading(true);
+    setSweepError(null);
+    setSweepResult(null);
+    setSweepModalRow(null);
+    setSweepLogRows([]);
+
+    const combos = [];
+    for (const eventType of sweepEventTypes) {
+      for (const [actor1, actor2] of SWEEP_DEFAULT_PAIRS) {
+        combos.push({ eventType, actor1, actor2 });
+      }
+    }
+
+    // Reveals one combo per SWEEP_MS_PER_COMBO - paced to roughly track the real backend runtime,
+    // not driven by actual progress (the endpoint returns one lump response). Stops on its own
+    // once every combo's been shown; the real fetch below clears it regardless of which finishes
+    // first so a slower-than-estimated response doesn't leave the log looking frozen mid-list.
+    let comboIndex = 0;
+    const revealNext = () => {
+      if (comboIndex >= combos.length) return;
+      const c = combos[comboIndex];
+      comboIndex += 1;
+      setSweepLogRows((prev) => [...prev, { id: comboIndex, ...c }]);
+    };
+    revealNext();
+    const intervalId = combos.length > 1 ? setInterval(revealNext, SWEEP_MS_PER_COMBO) : null;
+
+    try {
+      const body = {
+        eventTypes: sweepEventTypes,
+        dateFrom: form.dateFrom,
+        dateTo: form.dateTo,
+        basket: basketList,
+        windows: WINDOWS,
+      };
+
+      const res = await fetch('/api/analysis/event-study-sweep', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error || `Request failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setSweepResult(data);
+    } catch (err) {
+      setSweepError(err.message || 'Sweep failed');
+    } finally {
+      if (intervalId) clearInterval(intervalId);
+      setSweepLoading(false);
+    }
+  };
+
+  // Backend already ranks by bestPValue ascending - re-sorted here too so the table's contract
+  // ("sort by bestPValue ascending") doesn't silently depend on the backend never changing that.
+  const sortedSweepResults = useMemo(
+    () => (sweepResult?.results ? [...sweepResult.results].sort((a, b) => a.bestPValue - b.bestPValue) : []),
+    [sweepResult]
+  );
 
   // price-history returns { date, open, high, low, close, volume } ascending by date;
   // CandlestickSvgChart expects { ts (epoch seconds), open, high, low, close }.
@@ -1092,6 +1291,163 @@ export default function EventStudyAnalysis() {
           </Panel>
         </>
       )}
+
+      <Panel className="p-5 mb-6">
+        <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text)' }}>Batch Sweep</h2>
+        <div className="text-xs mb-4" style={{ color: 'var(--text-faint)' }}>
+          Runs the same analysis above across every combination of the selected event types × a
+          default set of {SWEEP_DEFAULT_PAIR_COUNT} country pairs, then ranks the testable results
+          and flags which survive Bonferroni correction for running many comparisons at once.
+        </div>
+
+        <form onSubmit={runSweep}>
+          <div className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-faint)' }}>
+            Step 1 — choose event types
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {EVENT_TYPES.map((t) => (
+              <EventTypeCard key={t} type={t} selected={sweepEventTypes.includes(t)} onToggle={() => toggleSweepEventType(t)} />
+            ))}
+          </div>
+          <div className="text-xs mt-2" style={{ color: 'var(--text-dim)' }}>
+            {sweepEventTypes.length} event type{sweepEventTypes.length === 1 ? '' : 's'} selected.
+          </div>
+
+          <div className="text-xs font-semibold uppercase tracking-wide mt-5 mb-2" style={{ color: 'var(--text-faint)' }}>
+            Step 2 — preview
+          </div>
+          {sweepEventTypes.length > 0 ? (
+            <div className="text-sm font-mono-data p-3 border" style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)', color: 'var(--text)' }}>
+              {sweepEventTypes.length} event type{sweepEventTypes.length === 1 ? '' : 's'} × {SWEEP_DEFAULT_PAIR_COUNT}{' '}
+              country pairs = {sweepComboCount} combinations. Estimated runtime: ~{sweepEstimatedSeconds}s
+            </div>
+          ) : (
+            <div className="text-xs" style={{ color: 'var(--text-faint)' }}>
+              Select at least one event type above to preview how many combinations this would run.
+            </div>
+          )}
+
+          <div className="text-xs font-semibold uppercase tracking-wide mt-5 mb-2" style={{ color: 'var(--text-faint)' }}>
+            Step 3 — launch
+          </div>
+          <div className="text-xs mb-3" style={{ color: 'var(--text-faint)' }}>
+            Using date range {form.dateFrom} → {form.dateTo} and basket{' '}
+            {basketList.length ? basketList.join(', ') : '(none set)'} from the form above.
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={sweepLoading || sweepEventTypes.length === 0 || basketList.length === 0}
+              className="font-mono-data font-semibold px-4 py-2 border transition-colors disabled:opacity-50"
+              style={{ borderColor: 'var(--accent)', color: 'var(--accent)', background: 'var(--accent-soft)' }}
+            >
+              {sweepLoading ? 'Running…' : 'Launch Investigation'}
+            </button>
+            {sweepEventTypes.length === 0 && (
+              <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Select at least one event type.</span>
+            )}
+          </div>
+        </form>
+
+        {sweepLoading && (
+          <div className="mt-4 border p-3" style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)' }}>
+            <div className="text-[10px] uppercase tracking-[0.2em] mb-2" style={{ color: 'var(--text-faint)' }}>
+              / SWEEP LOG
+            </div>
+            <SweepLogFeed rows={sweepLogRows} />
+          </div>
+        )}
+
+        {sweepError && (
+          <div
+            className="mt-3 p-3 border text-sm"
+            style={{ background: 'rgba(255,92,108,0.1)', borderColor: 'var(--negative)', color: 'var(--negative)' }}
+          >
+            {sweepError}
+          </div>
+        )}
+      </Panel>
+
+      {sweepResult && (
+        <Panel className="p-5 mb-6">
+          <div className="text-sm" style={{ color: 'var(--text)' }}>
+            <span className="font-mono-data font-semibold">{sweepResult.totalCombinationsRun}</span> combinations
+            tested, <span className="font-mono-data font-semibold">{sweepResult.testableCombinationsCount}</span>{' '}
+            testable, corrected significance threshold:{' '}
+            <span className="font-mono-data font-semibold">{sweepResult.correctedThreshold.toFixed(5)}</span>
+          </div>
+          <div className="text-xs mt-1 mb-4" style={{ color: 'var(--text-faint)' }}>
+            Bonferroni correction: since testing more combinations increases the chance of a false
+            positive, the bar for "real" gets stricter the more you test at once. Corrected
+            threshold = 0.05 ÷ {sweepResult.totalTestsForCorrection} tests.
+          </div>
+
+          {sortedSweepResults.length === 0 ? (
+            <div className="text-sm" style={{ color: 'var(--text-faint)' }}>
+              No testable combinations — every combination came back saturated or had no data.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sortedSweepResults.map((r) => {
+                const bestWindowSummary = r.summary.find((w) => w.windowDays === r.bestWindow);
+                const survives = r.survivesCorrection;
+                return (
+                  <button
+                    key={`${r.eventType}-${r.actor1}-${r.actor2}`}
+                    type="button"
+                    onClick={() => bestWindowSummary && setSweepModalRow({ row: r, w: bestWindowSummary })}
+                    className="w-full text-left border transition-colors block"
+                    style={{
+                      borderColor: survives ? 'var(--positive)' : 'var(--hairline)',
+                      background: survives ? 'rgba(53,214,184,0.08)' : 'var(--panel-2)',
+                      padding: survives ? '1rem 1.25rem' : '0.5rem 0.9rem',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div
+                          className={survives ? 'font-semibold' : ''}
+                          style={{
+                            color: survives ? 'var(--text)' : 'var(--text-dim)',
+                            fontSize: survives ? '1rem' : '0.8rem',
+                          }}
+                        >
+                          {r.eventType} — {r.actor1} ↔ {r.actor2}
+                        </div>
+                        <div
+                          className="font-mono-data mt-0.5"
+                          style={{ color: 'var(--text-faint)', fontSize: survives ? '0.75rem' : '0.7rem' }}
+                        >
+                          Best window +{r.bestWindow}d · p = {typeof r.bestPValue === 'number' ? r.bestPValue.toFixed(4) : '—'}
+                        </div>
+                      </div>
+                      <span
+                        className="font-mono-data text-[11px] px-2 py-1 border shrink-0"
+                        style={significanceStyle(survives)}
+                      >
+                        {survives ? 'Survives correction' : 'Does not survive'}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      <Modal
+        isOpen={!!sweepModalRow}
+        onClose={() => setSweepModalRow(null)}
+        title={
+          sweepModalRow
+            ? `${sweepModalRow.w.windowDays}-day window — ${sweepModalRow.row.eventType} ${sweepModalRow.row.actor1} ↔ ${sweepModalRow.row.actor2}`
+            : ''
+        }
+      >
+        {sweepModalRow && <ExplainModalContent w={sweepModalRow.w} />}
+      </Modal>
 
       <HelpButton onClick={() => setHelpOpen(true)} />
       <Modal isOpen={helpOpen} onClose={() => setHelpOpen(false)} title="Event-Study concept guide">
