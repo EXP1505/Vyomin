@@ -1301,7 +1301,7 @@ export default function EventStudyAnalysis() {
       <Panel className="p-5 mb-6">
         <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text)' }}>Event-Study Analyzer</h2>
         <div className="text-xs mb-4" style={{ color: 'var(--text-faint)' }}>
-          Diagnostic view — posts directly to /api/analysis/event-study. Not a polished feature yet.
+          Tests whether a geopolitical event type moved a stock basket, with statistical significance built in — not just a chart overlay.
         </div>
 
         <form onSubmit={runAnalysis} className="grid grid-cols-2 md:grid-cols-3 gap-3">

@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { key: 'radar', label: 'Radar Telemetry' },
   { key: 'graph', label: 'Intelligence Graph' },
   { key: 'finance', label: 'Financial Telemetry' },
+  { key: 'analysis', label: 'Event Study' },
 ];
 
 export function AppLayout() {

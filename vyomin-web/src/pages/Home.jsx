@@ -221,6 +221,34 @@ function FinancePreviewCard({ onNavigate, tickers }) {
   );
 }
 
+// No live "last sweep" state to preview (sweep results are client-side/ephemeral, not persisted
+// anywhere the Home page could read from) - so unlike the other three preview cards, this one is
+// a static teaser. The three chips echo the exact real/inconclusive/noise color language the
+// analyzer itself uses (see EventStudyAnalysis.jsx's PVALUE_CLASSIFICATIONS) as a preview of what
+// the feature actually does, rather than decorative color for its own sake.
+function EventStudyPreviewCard({ onNavigate }) {
+  return (
+    <PreviewCardShell eyebrow="/ EVENT STUDY" title="Does this event move the market?" onClick={() => onNavigate('analysis')}>
+      <div className="flex h-full flex-col justify-center gap-3 px-5 py-3">
+        <p className="text-xs leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+          Test whether a geopolitical event type moved a stock basket — with statistical significance built in, not just a chart overlay.
+        </p>
+        <div className="flex gap-1.5">
+          <span className="px-2 py-0.5 text-[10px] border" style={{ borderColor: 'var(--positive)', color: 'var(--positive)' }}>
+            real
+          </span>
+          <span className="px-2 py-0.5 text-[10px] border" style={{ borderColor: 'var(--hairline)', color: 'var(--text-dim)' }}>
+            inconclusive
+          </span>
+          <span className="px-2 py-0.5 text-[10px] border" style={{ borderColor: 'var(--negative)', color: 'var(--negative)' }}>
+            noise
+          </span>
+        </div>
+      </div>
+    </PreviewCardShell>
+  );
+}
+
 export function Home() {
   const navigate = useNavigate();
   const onNavigate = (key) => navigate('/' + key);
@@ -255,10 +283,15 @@ export function Home() {
 
       <StatsStrip trackCount={flights.length} entityCount={graphCounts.nodes} marketCount={tickers.length} />
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-3" style={{ height: '220px' }}>
+      {/* auto-rows fixes each row's height regardless of column count at the current breakpoint -
+          a plain fixed-height container (the previous approach) only worked by coincidence when
+          every card sat in a single row; it silently squashed multi-row layouts (e.g. the 2-col
+          breakpoint this 4th card introduces, and pre-existing single-column mobile). */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4 auto-rows-[220px]">
         <RadarPreviewCard onNavigate={onNavigate} flights={flights} />
         <GraphPreviewCard onNavigate={onNavigate} conflicts={recentConflicts} graphCounts={graphCounts} />
         <FinancePreviewCard onNavigate={onNavigate} tickers={tickers} />
+        <EventStudyPreviewCard onNavigate={onNavigate} />
       </div>
     </div>
   );
