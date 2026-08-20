@@ -1,8 +1,43 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Panel } from '../components/design/Panel';
 import { CandlestickSvgChart } from '../components/StockDetailModal';
 import { COUNTRIES } from '../data/countries';
+
+// No ErrorBoundary exists anywhere else in this app - without one, a render-time exception here
+// (e.g. an unexpected field shape in a sweep response) throws past React with nothing catching
+// it, and the whole page can end up back at a "coherent but wrong" state with zero visible signal
+// that anything went wrong - which is indistinguishable from the request having silently done
+// nothing. This scopes the blast radius to just the results panel and surfaces the real error.
+class SweepResultsErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Sweep results panel crashed while rendering:', error, info?.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          className="p-3 border text-sm"
+          style={{ background: 'rgba(255,92,108,0.1)', borderColor: 'var(--negative)', color: 'var(--negative)' }}
+        >
+          The results panel crashed while rendering ({this.state.error.message || 'unknown error'}). The sweep itself
+          completed — check the browser console for details.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // The 16 event_type values actually present in gdelt_event_history (verified via
 // `SELECT DISTINCT event_type FROM gdelt_event_history`, not the full 20 CAMEO root categories -
@@ -232,13 +267,19 @@ function EventTypeCard({ type, selected, onToggle }) {
 // prefix, newest row animates in) - but appending downward and auto-scrolling to the bottom
 // instead of prepending to the top, since this reads as a single running process finishing line
 // by line rather than a merged multi-source feed.
-function SweepLogFeed({ rows }) {
+// exhausted=true once every simulated row has been revealed but the real request still hasn't
+// resolved (actual server time routinely runs past the SWEEP_MS_PER_COMBO estimate - proxy/DB
+// load varies). Without a visible "still working" cue at that point, the panel just sits static
+// on the last row indefinitely, which reads as hung and invites a refresh - discarding all
+// component state and dropping the user back at the bare form with no error, no results, no clue
+// the request actually succeeded server-side (it did; only the client gave up watching it).
+function SweepLogFeed({ rows, exhausted }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [rows]);
+  }, [rows, exhausted]);
 
   return (
     <div ref={containerRef} className="h-48 overflow-y-auto font-mono-data text-xs pr-1">
@@ -250,13 +291,23 @@ function SweepLogFeed({ rows }) {
           style={{
             borderColor: 'var(--hairline)',
             color: 'var(--text-dim)',
-            animation: i === rows.length - 1 ? 'vyomin-feed-in 0.3s ease-out' : undefined,
+            animation: !exhausted && i === rows.length - 1 ? 'vyomin-feed-in 0.3s ease-out' : undefined,
           }}
         >
           <span style={{ color: 'var(--accent)' }}>{'>'}</span> Testing {row.eventType}: {row.actor1} ↔ {row.actor2}...
         </div>
       ))}
+      {exhausted && (
+        <div className="py-2" style={{ color: 'var(--accent)', animation: 'vyomin-pulse-text 1.4s ease-in-out infinite' }}>
+          <span style={{ color: 'var(--accent)' }}>{'>'}</span> Still aggregating results — real runtime can run past the
+          estimate above, hang tight...
+        </div>
+      )}
       <style>{`
+        @keyframes vyomin-pulse-text {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
         @keyframes vyomin-feed-in {
           0% { opacity: 0; transform: translateY(-4px); }
           100% { opacity: 1; transform: translateY(0); }
@@ -523,14 +574,21 @@ function pValueToBarPercent(p) {
   return SIG_ZONE_WIDTH + ((p - 0.05) / 0.95) * (100 - SIG_ZONE_WIDTH);
 }
 
-function PValueBar({ pValue }) {
+// correctedThreshold (optional) draws a second reference line - the Bonferroni-corrected bar,
+// distinct from the fixed 0.05 zone shading - so both are visible on one bar without a second
+// component. compact (optional) shrinks the bar and drops the axis labels/legend for use in
+// tightly-packed list rows; neither prop changes anything for existing callers that omit them.
+function PValueBar({ pValue, correctedThreshold, compact = false }) {
   const significant = pValue < 0.05;
   const markerPct = pValueToBarPercent(pValue);
   const zoneBoundary = pValueToBarPercent(0.05);
+  const correctedPct = typeof correctedThreshold === 'number' ? pValueToBarPercent(correctedThreshold) : null;
+  const barHeight = compact ? 10 : 20;
+  const dotSize = compact ? 8 : 12;
 
   return (
-    <div className="mt-3">
-      <div className="relative w-full h-5" style={{ background: 'var(--panel-2)' }}>
+    <div className={compact ? 'mt-2' : 'mt-3'}>
+      <div className="relative w-full" style={{ height: barHeight, background: 'var(--panel-2)' }}>
         <div
           className="absolute top-0 bottom-0 left-0"
           style={{ width: `${zoneBoundary}%`, background: 'rgba(53,214,184,0.15)' }}
@@ -540,24 +598,38 @@ function PValueBar({ pValue }) {
           style={{ left: `${zoneBoundary}%`, right: 0, background: 'rgba(124,134,152,0.1)' }}
         />
         <div className="absolute top-0 bottom-0 w-px" style={{ left: `${zoneBoundary}%`, background: 'var(--hairline)' }} />
+        {correctedPct != null && (
+          <div
+            className="absolute top-0 bottom-0"
+            style={{ left: `${correctedPct}%`, width: 2, background: 'var(--accent)' }}
+            title={`Bonferroni-corrected threshold: ${correctedThreshold.toFixed(5)}`}
+          />
+        )}
         <div
           className="absolute rounded-full"
           style={{
             left: `${markerPct}%`,
             top: '50%',
-            width: 12,
-            height: 12,
+            width: dotSize,
+            height: dotSize,
             transform: 'translate(-50%, -50%)',
             background: significant ? 'var(--positive)' : 'var(--text-dim)',
-            border: '2px solid var(--panel)',
+            border: `${compact ? 1 : 2}px solid var(--panel)`,
           }}
         />
       </div>
-      <div className="flex justify-between text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
-        <span>0</span>
-        <span style={{ position: 'relative', left: `-${50 - zoneBoundary}%` }}>0.05</span>
-        <span>1</span>
-      </div>
+      {!compact && (
+        <div className="flex justify-between text-xs mt-1" style={{ color: 'var(--text-faint)' }}>
+          <span>0</span>
+          <span style={{ position: 'relative', left: `-${50 - zoneBoundary}%` }}>0.05</span>
+          <span>1</span>
+        </div>
+      )}
+      {!compact && correctedPct != null && (
+        <div className="text-[10px] mt-0.5" style={{ color: 'var(--accent)' }}>
+          Amber line = Bonferroni-corrected threshold ({correctedThreshold.toFixed(5)})
+        </div>
+      )}
     </div>
   );
 }
@@ -993,9 +1065,23 @@ export default function EventStudyAnalysis() {
   const [sweepResult, setSweepResult] = useState(null);
   // Client-side simulated progress log for the loading state - see runSweep/SWEEP_MS_PER_COMBO.
   const [sweepLogRows, setSweepLogRows] = useState([]);
+  // true once every simulated combo has been revealed but the real fetch still hasn't resolved -
+  // drives SweepLogFeed's "still aggregating" fallback line so the panel never reads as frozen.
+  const [sweepLogExhausted, setSweepLogExhausted] = useState(false);
   // { row, w } - the clicked SweepResult plus its bestWindow's WindowSummary, fed straight into
   // the same ExplainModalContent the single-query WindowCard modal uses.
   const [sweepModalRow, setSweepModalRow] = useState(null);
+
+  // The results panel lands well below the (already-tall) sweep form, off the bottom of the
+  // viewport the user was looking at when they clicked Launch - confirmed via mount/state tracing
+  // that the state update itself was landing correctly, the results were just rendering unseen.
+  // Auto-scrolling to it the moment it appears makes that impossible to miss.
+  const sweepResultsRef = useRef(null);
+  useEffect(() => {
+    if (sweepResult && sweepResultsRef.current) {
+      sweepResultsRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [sweepResult]);
 
   const basketList = useMemo(
     () => form.basket.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
@@ -1082,6 +1168,7 @@ export default function EventStudyAnalysis() {
     setSweepResult(null);
     setSweepModalRow(null);
     setSweepLogRows([]);
+    setSweepLogExhausted(false);
 
     const combos = [];
     for (const eventType of sweepEventTypes) {
@@ -1091,18 +1178,27 @@ export default function EventStudyAnalysis() {
     }
 
     // Reveals one combo per SWEEP_MS_PER_COMBO - paced to roughly track the real backend runtime,
-    // not driven by actual progress (the endpoint returns one lump response). Stops on its own
-    // once every combo's been shown; the real fetch below clears it regardless of which finishes
-    // first so a slower-than-estimated response doesn't leave the log looking frozen mid-list.
+    // not driven by actual progress (the endpoint returns one lump response). Real server time
+    // routinely runs past this estimate (proxy/DB load varies), so once every combo's been shown
+    // the interval stops itself and flips sweepLogExhausted - SweepLogFeed then shows a "still
+    // aggregating" line instead of just sitting static, which otherwise reads as hung and invites
+    // a page refresh that throws away all this component's state for nothing (the request is
+    // still running server-side the whole time). The real fetch below clears the interval
+    // regardless of which finishes first.
     let comboIndex = 0;
+    let intervalId = null;
     const revealNext = () => {
       if (comboIndex >= combos.length) return;
       const c = combos[comboIndex];
       comboIndex += 1;
       setSweepLogRows((prev) => [...prev, { id: comboIndex, ...c }]);
+      if (comboIndex >= combos.length) {
+        setSweepLogExhausted(true);
+        if (intervalId) clearInterval(intervalId);
+      }
     };
     revealNext();
-    const intervalId = combos.length > 1 ? setInterval(revealNext, SWEEP_MS_PER_COMBO) : null;
+    intervalId = combos.length > 1 && comboIndex < combos.length ? setInterval(revealNext, SWEEP_MS_PER_COMBO) : null;
 
     try {
       const body = {
@@ -1125,8 +1221,19 @@ export default function EventStudyAnalysis() {
       }
 
       const data = await res.json();
+      // Diagnostic only (kept in production too): this endpoint's runtime is genuinely variable
+      // and hard to reproduce on demand, so if a future run ever again shows nothing despite the
+      // request succeeding, this line is the way to tell "data never arrived intact" apart from
+      // "data arrived fine but something after this point failed to render it".
+      console.info('[sweep] response received', {
+        totalCombinationsRun: data?.totalCombinationsRun,
+        testableCombinationsCount: data?.testableCombinationsCount,
+        resultsLength: Array.isArray(data?.results) ? data.results.length : 'not-an-array',
+        correctedThreshold: data?.correctedThreshold,
+      });
       setSweepResult(data);
     } catch (err) {
+      console.error('[sweep] request failed', err);
       setSweepError(err.message || 'Sweep failed');
     } finally {
       if (intervalId) clearInterval(intervalId);
@@ -1355,7 +1462,7 @@ export default function EventStudyAnalysis() {
             <div className="text-[10px] uppercase tracking-[0.2em] mb-2" style={{ color: 'var(--text-faint)' }}>
               / SWEEP LOG
             </div>
-            <SweepLogFeed rows={sweepLogRows} />
+            <SweepLogFeed rows={sweepLogRows} exhausted={sweepLogExhausted} />
           </div>
         )}
 
@@ -1370,12 +1477,16 @@ export default function EventStudyAnalysis() {
       </Panel>
 
       {sweepResult && (
+        <div ref={sweepResultsRef}>
+        <SweepResultsErrorBoundary>
         <Panel className="p-5 mb-6">
           <div className="text-sm" style={{ color: 'var(--text)' }}>
             <span className="font-mono-data font-semibold">{sweepResult.totalCombinationsRun}</span> combinations
             tested, <span className="font-mono-data font-semibold">{sweepResult.testableCombinationsCount}</span>{' '}
             testable, corrected significance threshold:{' '}
-            <span className="font-mono-data font-semibold">{sweepResult.correctedThreshold.toFixed(5)}</span>
+            <span className="font-mono-data font-semibold">
+              {typeof sweepResult.correctedThreshold === 'number' ? sweepResult.correctedThreshold.toFixed(5) : '—'}
+            </span>
           </div>
           <div className="text-xs mt-1 mb-4" style={{ color: 'var(--text-faint)' }}>
             Bonferroni correction: since testing more combinations increases the chance of a false
@@ -1388,53 +1499,91 @@ export default function EventStudyAnalysis() {
               No testable combinations — every combination came back saturated or had no data.
             </div>
           ) : (
-            <div className="space-y-2">
-              {sortedSweepResults.map((r) => {
+            <div>
+              {sortedSweepResults.map((r, i) => {
                 const bestWindowSummary = r.summary.find((w) => w.windowDays === r.bestWindow);
                 const survives = r.survivesCorrection;
+                const pText = typeof r.bestPValue === 'number' ? r.bestPValue.toFixed(4) : '—';
+                // Three discrete tiers by rank, not a continuous gradient: rank 1 is a "hero" card,
+                // ranks 2-5 a medium tier (still shows the mini bar), rank 6+ compact/text-only -
+                // the bottom of a sweep is genuinely less important and should read as skimmable.
+                const tier = i === 0 ? 'hero' : i <= 4 ? 'mid' : 'compact';
+                // A visual label layer only - the ranking itself stays purely bestPValue-ascending
+                // (no re-grouping), this just marks where the event type changes from the row above.
+                const showGroupHeader = i === 0 || r.eventType !== sortedSweepResults[i - 1].eventType;
+
                 return (
-                  <button
-                    key={`${r.eventType}-${r.actor1}-${r.actor2}`}
-                    type="button"
-                    onClick={() => bestWindowSummary && setSweepModalRow({ row: r, w: bestWindowSummary })}
-                    className="w-full text-left border transition-colors block"
-                    style={{
-                      borderColor: survives ? 'var(--positive)' : 'var(--hairline)',
-                      background: survives ? 'rgba(53,214,184,0.08)' : 'var(--panel-2)',
-                      padding: survives ? '1rem 1.25rem' : '0.5rem 0.9rem',
-                    }}
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div
-                          className={survives ? 'font-semibold' : ''}
-                          style={{
-                            color: survives ? 'var(--text)' : 'var(--text-dim)',
-                            fontSize: survives ? '1rem' : '0.8rem',
-                          }}
-                        >
-                          {r.eventType} — {r.actor1} ↔ {r.actor2}
-                        </div>
-                        <div
-                          className="font-mono-data mt-0.5"
-                          style={{ color: 'var(--text-faint)', fontSize: survives ? '0.75rem' : '0.7rem' }}
-                        >
-                          Best window +{r.bestWindow}d · p = {typeof r.bestPValue === 'number' ? r.bestPValue.toFixed(4) : '—'}
-                        </div>
-                      </div>
-                      <span
-                        className="font-mono-data text-[11px] px-2 py-1 border shrink-0"
-                        style={significanceStyle(survives)}
+                  <div key={`${r.eventType}-${r.actor1}-${r.actor2}`}>
+                    {showGroupHeader && (
+                      <div
+                        className="text-[10px] uppercase tracking-[0.2em]"
+                        style={{ color: 'var(--text-faint)', marginTop: i === 0 ? 0 : '1.25rem', marginBottom: '0.4rem' }}
                       >
-                        {survives ? 'Survives correction' : 'Does not survive'}
-                      </span>
-                    </div>
-                  </button>
+                        {r.eventType}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => bestWindowSummary && setSweepModalRow({ row: r, w: bestWindowSummary })}
+                      className="w-full text-left border transition-colors block"
+                      style={{
+                        borderColor: survives ? 'var(--positive)' : tier === 'hero' ? 'var(--accent)' : 'var(--hairline)',
+                        borderWidth: tier === 'hero' ? 2 : 1,
+                        background: survives ? 'rgba(53,214,184,0.08)' : 'var(--panel-2)',
+                        padding: tier === 'hero' ? '1.5rem 1.75rem' : tier === 'mid' ? '0.9rem 1.1rem' : '0.4rem 0.8rem',
+                        marginBottom: tier === 'hero' ? '0.75rem' : tier === 'mid' ? '0.5rem' : '0.25rem',
+                      }}
+                    >
+                      {tier === 'hero' && (
+                        <div className="text-[10px] uppercase tracking-[0.2em] mb-2" style={{ color: 'var(--accent)' }}>
+                          Closest to significant
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <div
+                            style={{
+                              color: tier === 'compact' ? 'var(--text-dim)' : 'var(--text)',
+                              fontSize: tier === 'hero' ? '1.4rem' : tier === 'mid' ? '0.95rem' : '0.8rem',
+                              fontWeight: tier === 'compact' ? 400 : 600,
+                            }}
+                          >
+                            {r.eventType} — {r.actor1} ↔ {r.actor2}
+                          </div>
+                          <div
+                            className="font-mono-data mt-0.5"
+                            style={{
+                              color: 'var(--text-faint)',
+                              fontSize: tier === 'hero' ? '0.85rem' : tier === 'mid' ? '0.75rem' : '0.7rem',
+                            }}
+                          >
+                            Best window +{r.bestWindow}d · p = {pText}
+                          </div>
+                        </div>
+                        <span
+                          className="font-mono-data text-[11px] px-2 py-1 border shrink-0"
+                          style={significanceStyle(survives)}
+                        >
+                          {survives ? 'Survives correction' : 'Does not survive'}
+                        </span>
+                      </div>
+
+                      {tier !== 'compact' && typeof r.bestPValue === 'number' && (
+                        <PValueBar
+                          pValue={r.bestPValue}
+                          correctedThreshold={sweepResult.correctedThreshold}
+                          compact={tier === 'mid'}
+                        />
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
           )}
         </Panel>
+        </SweepResultsErrorBoundary>
+        </div>
       )}
 
       <Modal
