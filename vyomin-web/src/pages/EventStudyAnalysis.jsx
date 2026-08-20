@@ -231,6 +231,21 @@ function CountryAutocomplete({ value, onChange, placeholder }) {
 // used by bootstrapBadge below (single-query per-window badge) and reused as-is by the sweep
 // results table's "Survives correction" column, so both stay visually identical by construction
 // rather than by two separately-maintained copies of the same colors.
+// Directional badge is ONLY ever computed for cards where survivesCorrection is true - describes
+// what happened in the tested sample, not a recommendation, and deliberately withheld for
+// everything that doesn't survive correction (the overwhelming common case) since a result that
+// isn't statistically distinguishable from random has no real "direction" to describe.
+function directionBadge(meanReturn) {
+  if (typeof meanReturn !== 'number' || meanReturn === 0) return null;
+  const rising = meanReturn > 0;
+  return {
+    label: rising ? 'Basket tended to rise after this event' : 'Basket tended to fall after this event',
+    style: rising
+      ? { color: 'var(--positive)', borderColor: 'var(--positive)', background: 'rgba(53,214,184,0.1)' }
+      : { color: 'var(--negative)', borderColor: 'var(--negative)', background: 'rgba(255,92,108,0.08)' },
+  };
+}
+
 function significanceStyle(pass) {
   return pass
     ? { color: 'var(--positive)', borderColor: 'var(--positive)', background: 'rgba(53,214,184,0.1)' }
@@ -655,7 +670,7 @@ function StatPanel({ label, children }) {
 // Five-tone chip language for the concept-guide's threshold tables and live classification labels
 // - a superset of takeawayStyle's four tones ('strong-positive' and 'muted-negative' added) since
 // the p-value/hit-rate tables both need two shades of green or two shades of red to distinguish
-// e.g. "very unlikely to be chance" from "unlikely to be chance".
+// e.g. "very unlikely to be random" from "unlikely to be random".
 function toneChipStyle(tone) {
   switch (tone) {
     case 'strong-positive':
@@ -679,11 +694,19 @@ function classifyHitRate(pct) {
   return { label: 'Above coin-flip', tone: 'positive' };
 }
 
+// Single source of truth for the p-value classification wording/tone/thresholds - used by the
+// guide's static table (PVALUE_TABLE, derived below), the guide's live slider (classifyPValue),
+// and the result-explanation modal's Bootstrap p-value panel, so the four labels can never drift
+// out of sync between those three places.
+const PVALUE_CLASSIFICATIONS = [
+  { range: '< 0.01', label: 'Very unlikely to be random — likely real', tone: 'strong-positive', test: (p) => p < 0.01 },
+  { range: '0.01–0.05', label: 'Unlikely to be random — possibly real', tone: 'positive', test: (p) => p < 0.05 },
+  { range: '0.05–0.20', label: 'Could easily be random — inconclusive', tone: 'neutral', test: (p) => p <= 0.2 },
+  { range: '> 0.20', label: 'Looks like random noise — not real', tone: 'muted-negative', test: () => true },
+];
+
 function classifyPValue(p) {
-  if (p < 0.01) return { label: 'Very unlikely to be chance', tone: 'strong-positive' };
-  if (p < 0.05) return { label: 'Unlikely to be chance', tone: 'positive' };
-  if (p <= 0.2) return { label: 'Plausibly chance', tone: 'neutral' };
-  return { label: 'Very plausibly chance', tone: 'muted-negative' };
+  return PVALUE_CLASSIFICATIONS.find((c) => c.test(p));
 }
 
 function classifyCoverage(pct) {
@@ -698,12 +721,7 @@ const HIT_RATE_TABLE = [
   { range: '45–55%', label: 'About a coin flip', tone: 'neutral' },
   { range: '> 55%', label: 'Above coin-flip', tone: 'positive' },
 ];
-const PVALUE_TABLE = [
-  { range: '< 0.01', label: 'Very unlikely to be chance', tone: 'strong-positive' },
-  { range: '0.01–0.05', label: 'Unlikely to be chance', tone: 'positive' },
-  { range: '0.05–0.20', label: 'Plausibly chance', tone: 'neutral' },
-  { range: '> 0.20', label: 'Very plausibly chance', tone: 'muted-negative' },
-];
+const PVALUE_TABLE = PVALUE_CLASSIFICATIONS.map(({ range, label, tone }) => ({ range, label, tone }));
 const COVERAGE_TABLE = [
   { range: '< 30%', label: 'Sparse — good for testing', tone: 'positive' },
   { range: '30–70%', label: 'Moderate', tone: 'neutral' },
@@ -914,6 +932,11 @@ function ExplainModalContent({ w }) {
             <>
               <div className="font-mono-data text-3xl font-bold mt-1" style={{ color: w.bootstrapPValue < 0.05 ? 'var(--positive)' : 'var(--text)' }}>
                 {w.bootstrapPValue.toFixed(4)}
+              </div>
+              <div className="mt-2">
+                <span className="inline-block px-2.5 py-1 border text-xs" style={toneChipStyle(classifyPValue(w.bootstrapPValue).tone)}>
+                  {classifyPValue(w.bootstrapPValue).label}
+                </span>
               </div>
               <PValueBar pValue={w.bootstrapPValue} />
               <div className="text-sm mt-2" style={{ color: 'var(--text-faint)' }}>
@@ -1480,6 +1503,10 @@ export default function EventStudyAnalysis() {
         <div ref={sweepResultsRef}>
         <SweepResultsErrorBoundary>
         <Panel className="p-5 mb-6">
+          <div className="text-xs mb-3" style={{ color: 'var(--text-faint)' }}>
+            Historical association only — not investment advice, and past patterns are not predictive of future price
+            movement.
+          </div>
           <div className="text-sm" style={{ color: 'var(--text)' }}>
             <span className="font-mono-data font-semibold">{sweepResult.totalCombinationsRun}</span> combinations
             tested, <span className="font-mono-data font-semibold">{sweepResult.testableCombinationsCount}</span>{' '}
@@ -1504,6 +1531,8 @@ export default function EventStudyAnalysis() {
                 const bestWindowSummary = r.summary.find((w) => w.windowDays === r.bestWindow);
                 const survives = r.survivesCorrection;
                 const pText = typeof r.bestPValue === 'number' ? r.bestPValue.toFixed(4) : '—';
+                // Only ever computed for survivors - see directionBadge's own comment for why.
+                const direction = survives ? directionBadge(bestWindowSummary?.meanReturn) : null;
                 // Three discrete tiers by rank, not a continuous gradient: rank 1 is a "hero" card,
                 // ranks 2-5 a medium tier (still shows the mini bar), rank 6+ compact/text-only -
                 // the bottom of a sweep is genuinely less important and should read as skimmable.
@@ -1560,12 +1589,19 @@ export default function EventStudyAnalysis() {
                             Best window +{r.bestWindow}d · p = {pText}
                           </div>
                         </div>
-                        <span
-                          className="font-mono-data text-[11px] px-2 py-1 border shrink-0"
-                          style={significanceStyle(survives)}
-                        >
-                          {survives ? 'Survives correction' : 'Does not survive'}
-                        </span>
+                        <div className="flex flex-col items-end gap-1.5 shrink-0">
+                          <span
+                            className="font-mono-data text-[11px] px-2 py-1 border shrink-0"
+                            style={significanceStyle(survives)}
+                          >
+                            {survives ? 'Survives correction' : 'Does not survive'}
+                          </span>
+                          {direction && (
+                            <span className="font-mono-data text-[11px] px-2 py-1 border text-right" style={direction.style}>
+                              {direction.label}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {tier !== 'compact' && typeof r.bestPValue === 'number' && (
