@@ -78,4 +78,70 @@ public interface GdeltEventHistoryRepository extends JpaRepository<GdeltEventHis
                        @Param("actor2CountryCode") String actor2CountryCode,
                        @Param("dateFrom") LocalDate dateFrom,
                        @Param("dateTo") LocalDate dateTo);
+
+    // Country-dossier variant: findDyadEvents/countRawRows filter actor1 and actor2 independently
+    // (AND), so a single country can only be matched by passing it as actor1 with actor2 left
+    // null - which still requires actor2 to be non-null, and misses events where the country only
+    // appears as actor2. These OR-based queries match the country in EITHER actor slot instead.
+    @Query(value = """
+            SELECT event_type AS eventType,
+                   actor1_country_code AS actor1CountryCode,
+                   actor2_country_code AS actor2CountryCode,
+                   event_date AS eventDate,
+                   avg(severity_score) AS avgSeverity,
+                   avg(tone) AS avgTone,
+                   count(*) AS articleCount,
+                   max(source_url) AS sourceUrl
+            FROM gdelt_event_history
+            WHERE actor1_country_code IS NOT NULL AND actor1_country_code <> ''
+              AND actor2_country_code IS NOT NULL AND actor2_country_code <> ''
+              AND (:eventType IS NULL OR event_type = :eventType)
+              AND (actor1_country_code = :countryCode OR actor2_country_code = :countryCode)
+              AND event_date BETWEEN :dateFrom AND :dateTo
+            GROUP BY event_type, actor1_country_code, actor2_country_code, event_date
+            ORDER BY event_date
+            """, nativeQuery = true)
+    List<DyadEventProjection> findDyadEventsForCountry(@Param("eventType") String eventType,
+                                                         @Param("countryCode") String countryCode,
+                                                         @Param("dateFrom") LocalDate dateFrom,
+                                                         @Param("dateTo") LocalDate dateTo);
+
+    // Raw (uncollapsed) row count for a single country in either actor slot, across the whole
+    // date range - no eventType filter, this is the dossier's headline totalEvents.
+    @Query(value = """
+            SELECT count(*)
+            FROM gdelt_event_history
+            WHERE (actor1_country_code = :countryCode OR actor2_country_code = :countryCode)
+              AND event_date BETWEEN :dateFrom AND :dateTo
+            """, nativeQuery = true)
+    long countRawRowsForCountry(@Param("countryCode") String countryCode,
+                                 @Param("dateFrom") LocalDate dateFrom,
+                                 @Param("dateTo") LocalDate dateTo);
+
+    @Query(value = """
+            SELECT event_type AS eventType, count(*) AS count
+            FROM gdelt_event_history
+            WHERE (actor1_country_code = :countryCode OR actor2_country_code = :countryCode)
+              AND event_date BETWEEN :dateFrom AND :dateTo
+            GROUP BY event_type
+            ORDER BY count(*) DESC
+            """, nativeQuery = true)
+    List<CountryEventTypeCountProjection> countByEventTypeForCountry(@Param("countryCode") String countryCode,
+                                                                       @Param("dateFrom") LocalDate dateFrom,
+                                                                       @Param("dateTo") LocalDate dateTo);
+
+    @Query(value = """
+            SELECT event_date AS eventDate, event_type AS eventType,
+                   actor1_name AS actor1, actor2_name AS actor2,
+                   severity_score AS severityScore, source_url AS sourceUrl
+            FROM gdelt_event_history
+            WHERE (actor1_country_code = :countryCode OR actor2_country_code = :countryCode)
+              AND event_date BETWEEN :dateFrom AND :dateTo
+            ORDER BY event_date DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<CountryRawEventProjection> findRecentEventsForCountry(@Param("countryCode") String countryCode,
+                                                                 @Param("dateFrom") LocalDate dateFrom,
+                                                                 @Param("dateTo") LocalDate dateTo,
+                                                                 @Param("limit") int limit);
 }

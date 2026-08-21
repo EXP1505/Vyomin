@@ -1,5 +1,10 @@
 package com.vyomin.core_api.service;
 
+import com.vyomin.core_api.dto.EventStudyDossierDtos.CountryDossierResponse;
+import com.vyomin.core_api.dto.EventStudyDossierDtos.EventSummary;
+import com.vyomin.core_api.dto.EventStudyDossierDtos.EventTypeCount;
+import com.vyomin.core_api.dto.EventStudyDossierDtos.MarketRelevance;
+import com.vyomin.core_api.dto.EventStudyDossierDtos.RecentEvent;
 import com.vyomin.core_api.dto.EventStudyDtos.EventResult;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyRequest;
 import com.vyomin.core_api.dto.EventStudyDtos.EventStudyResponse;
@@ -8,6 +13,8 @@ import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepRequest;
 import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepResponse;
 import com.vyomin.core_api.dto.EventStudySweepDtos.SweepResult;
 import com.vyomin.core_api.model.PriceDaily;
+import com.vyomin.core_api.repository.CountryEventTypeCountProjection;
+import com.vyomin.core_api.repository.CountryRawEventProjection;
 import com.vyomin.core_api.repository.DyadEventProjection;
 import com.vyomin.core_api.repository.GdeltEventHistoryRepository;
 import com.vyomin.core_api.repository.PriceDailyRepository;
@@ -81,12 +88,78 @@ public class EventStudyService {
 
         long rawRowCount = gdeltEventHistoryRepository.countRawRows(
                 eventType, actor1CountryCode, actor2CountryCode, request.dateFrom(), request.dateTo());
+
+        return runEventStudyCore(dyadEvents, rawRowCount, request.dateFrom(), request.dateTo(),
+                request.basket(), request.windows());
+    }
+
+    /**
+     * Country-dossier variant of runEventStudy(): matches countryCode in EITHER actor slot (OR,
+     * not AND) via findDyadEventsForCountry/countRawRowsForCountry, restricted to a single
+     * eventType (the dossier picks the country's most common event type as the default). Shares
+     * every other step - forward-return lookup, window aggregation, bootstrap - with
+     * runEventStudy() via runEventStudyCore().
+     */
+    public EventStudyResponse runEventStudyForCountry(String eventType, String countryCode, LocalDate dateFrom,
+                                                        LocalDate dateTo, List<String> basket, List<Integer> windows) {
+        List<DyadEventProjection> dyadEvents = gdeltEventHistoryRepository.findDyadEventsForCountry(
+                eventType, countryCode, dateFrom, dateTo);
+
+        long rawRowCount = gdeltEventHistoryRepository.countRawRowsForCountry(countryCode, dateFrom, dateTo);
+
+        return runEventStudyCore(dyadEvents, rawRowCount, dateFrom, dateTo, basket, windows);
+    }
+
+    /**
+     * Aggregation/orchestration layer for a single country - same pattern as runSweep(): no new
+     * data sources or query logic beyond the OR-based country queries above, everything else
+     * (forward returns, bootstrap) goes through the existing runEventStudyForCountry() path.
+     * eventSummary is always populated from the raw rows; marketRelevance is null when the country
+     * has zero matching events in range (nothing to run a bootstrap against).
+     */
+    public CountryDossierResponse runCountryDossier(String countryCode, LocalDate dateFrom, LocalDate dateTo,
+                                                      List<String> basket) {
+        long totalEvents = gdeltEventHistoryRepository.countRawRowsForCountry(countryCode, dateFrom, dateTo);
+
+        List<EventTypeCount> byEventType = gdeltEventHistoryRepository
+                .countByEventTypeForCountry(countryCode, dateFrom, dateTo).stream()
+                .map(p -> new EventTypeCount(p.getEventType(), p.getCount()))
+                .toList();
+
+        List<RecentEvent> recentEvents = gdeltEventHistoryRepository
+                .findRecentEventsForCountry(countryCode, dateFrom, dateTo, 20).stream()
+                .map(p -> new RecentEvent(p.getEventDate(), p.getEventType(), p.getActor1(), p.getActor2(),
+                        p.getSeverityScore(), p.getSourceUrl()))
+                .toList();
+
+        EventSummary eventSummary = new EventSummary(totalEvents, byEventType, recentEvents);
+
+        if (totalEvents == 0) {
+            return new CountryDossierResponse(countryCode, dateFrom, dateTo, eventSummary, null);
+        }
+
+        // The country's single most common event type in range - the broadest reasonable default
+        // given runEventStudy's per-eventType signature, without changing that signature.
+        String topEventType = byEventType.get(0).eventType();
+        List<Integer> windows = List.of(1, 3, 5);
+
+        EventStudyResponse eventStudy = runEventStudyForCountry(topEventType, countryCode, dateFrom, dateTo,
+                basket, windows);
+
+        String note = "Based on all " + topEventType + "-type events involving " + countryCode + ", "
+                + dateFrom + " to " + dateTo;
+        MarketRelevance marketRelevance = new MarketRelevance(eventStudy.summary(), note);
+
+        return new CountryDossierResponse(countryCode, dateFrom, dateTo, eventSummary, marketRelevance);
+    }
+
+    private EventStudyResponse runEventStudyCore(List<DyadEventProjection> dyadEvents, long rawRowCount,
+                                                   LocalDate dateFrom, LocalDate dateTo, List<String> basket,
+                                                   List<Integer> windows) {
         long includedRawRows = dyadEvents.stream().mapToLong(DyadEventProjection::getArticleCount).sum();
         log.info("Event study dyad collapse: {} raw rows -> {} distinct dyad-events " +
                         "({} raw rows included, {} excluded for missing actor identification)",
                 rawRowCount, dyadEvents.size(), includedRawRows, rawRowCount - includedRawRows);
-
-        List<Integer> windows = request.windows();
 
         // Per window k: distinct t0 -> its return (one entry per trading-day baseline, however
         // many dyad-events shared it) - this is what independentWindowCount/meanReturn/hitRate
@@ -106,7 +179,7 @@ public class EventStudyService {
             LocalDate t0 = forwardReturnService.resolveBaselineTradingDay(event.getEventDate());
             Map<Integer, BigDecimal> perWindowReturns = new LinkedHashMap<>();
             for (Integer k : windows) {
-                BasketForwardReturn result = forwardReturnService.basketForwardReturn(request.basket(), event.getEventDate(), k);
+                BasketForwardReturn result = forwardReturnService.basketForwardReturn(basket, event.getEventDate(), k);
                 BigDecimal r = result.averageReturn();
                 perWindowReturns.put(k, r);
                 if (r != null) {
@@ -117,7 +190,7 @@ public class EventStudyService {
                     // t0 to the last trading day BEFORE dateFrom (e.g. the prior Friday), which
                     // countTradingDaysInRange's denominator correctly excludes. Without this check
                     // that t0 still landed in the numerator, letting coverage exceed 1.0.
-                    if (t0 != null && !t0.isBefore(request.dateFrom()) && !t0.isAfter(request.dateTo())) {
+                    if (t0 != null && !t0.isBefore(dateFrom) && !t0.isAfter(dateTo)) {
                         // Same t0 always yields the same return for this basket/window (it's what
                         // basketForwardReturn resolves internally from eventDate) - putIfAbsent so
                         // a t0 shared by many dyad-events counts once, not once per dyad-event.
@@ -129,7 +202,7 @@ public class EventStudyService {
                     event.getArticleCount(), perWindowReturns));
         }
 
-        long totalDistinctTradingDaysInRange = countTradingDaysInRange(request.dateFrom(), request.dateTo());
+        long totalDistinctTradingDaysInRange = countTradingDaysInRange(dateFrom, dateTo);
 
         // Precomputed ONCE per request, outside the 10,000-iteration bootstrap loop below: every
         // trading day in [dateFrom, dateTo] that has a computable basket return for window k. This
@@ -137,7 +210,7 @@ public class EventStudyService {
         // meanReturn gets tested against - restricted to non-null entries since a random draw that
         // landed on a day with no computable return couldn't contribute to a "mean return" anyway.
         Map<Integer, Map<LocalDate, BigDecimal>> eligiblePoolByWindow = precomputeEligiblePool(
-                request.basket(), request.dateFrom(), request.dateTo(), windows);
+                basket, dateFrom, dateTo, windows);
 
         List<WindowSummary> summary = new ArrayList<>();
         for (Integer k : windows) {

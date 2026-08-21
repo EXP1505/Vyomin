@@ -8,6 +8,7 @@ import { TrackMarkers } from './TrackMarkers';
 import { CapitalMarkers } from './CapitalMarkers';
 import { ConflictMarkers } from './ConflictMarkers';
 import { latLonToVector3, GLOBE_RADIUS } from './geo';
+import { COUNTRY_CODE_TO_NAME } from '../../data/countries';
 
 const IDLE_RESUME_MS = 4000;
 
@@ -57,6 +58,7 @@ function Scene({
   selectedCallsign,
   onSelectTrack,
   onCountryClick,
+  onSelectConflict,
   focusTarget,
   onArrive,
   zoomRef,
@@ -84,7 +86,7 @@ function Scene({
         selectedCallsign={selectedCallsign}
         onSelect={onSelectTrack}
       />
-      {conflicts && conflicts.length > 0 && <ConflictMarkers conflicts={conflicts} />}
+      {conflicts && conflicts.length > 0 && <ConflictMarkers conflicts={conflicts} onSelect={onSelectConflict} />}
       {!compact && <CapitalMarkers />}
       <CameraFocus target={focusTarget} onArrive={onArrive} />
       {!compact && <ZoomController ref={zoomRef} />}
@@ -101,6 +103,7 @@ export const Globe = forwardRef(function Globe(
     compact = false,
     conflicts = [],
     disableTouchZoom = false,
+    onSelectConflict,
   },
   ref
 ) {
@@ -134,6 +137,24 @@ export const Globe = forwardRef(function Globe(
     [onSelectTrack]
   );
 
+  // Conflict rows already carry GDELT actor country codes (see IntelligenceController's
+  // /conflicts/recent, backed by the Conflict entity's actor1CountryCode/actor2CountryCode) - the
+  // frontend just hadn't read them yet. Reusing that instead of any new lat/lon reverse-geocoding.
+  // actor1 preferred over actor2 as "the" country for this flashpoint; validated against the same
+  // COUNTRIES list the actor autocomplete uses so a stray/unmapped GDELT code never opens a dossier
+  // for a country the app can't even display a name for.
+  const handleSelectConflict = useCallback(
+    (conflict) => {
+      if (!conflict) return;
+      if (Number.isFinite(conflict.latitude) && Number.isFinite(conflict.longitude)) {
+        setFocusTarget(latLonToVector3(conflict.latitude, conflict.longitude, 3.4));
+      }
+      const code = [conflict.actor1CountryCode, conflict.actor2CountryCode].find((c) => c && COUNTRY_CODE_TO_NAME.has(c));
+      if (code) onSelectConflict?.(code, conflict);
+    },
+    [onSelectConflict]
+  );
+
   return (
     <Canvas
       camera={{ position: [0, 0, 5.5], fov: 45 }}
@@ -147,6 +168,7 @@ export const Globe = forwardRef(function Globe(
           selectedCallsign={selectedCallsign}
           onSelectTrack={handleSelectTrack}
           onCountryClick={handleCountryClick}
+          onSelectConflict={handleSelectConflict}
           focusTarget={focusTarget}
           onArrive={() => setFocusTarget(null)}
           zoomRef={zoomRef}

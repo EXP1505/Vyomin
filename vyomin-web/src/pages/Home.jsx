@@ -271,7 +271,13 @@ export function Home() {
 
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]" style={{ height: '54vh', minHeight: '420px' }}>
         <Panel className="relative overflow-hidden p-0">
-          <Globe flights={flights} activeTypes={MILITARY_ONLY} conflicts={recentConflicts} disableTouchZoom />
+          <Globe
+            flights={flights}
+            activeTypes={MILITARY_ONLY}
+            conflicts={recentConflicts}
+            disableTouchZoom
+            onSelectConflict={(code) => navigate('/dossier/' + code)}
+          />
         </Panel>
         <Panel className="flex flex-col overflow-hidden p-4">
           <div className="mb-2 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-faint)' }}>

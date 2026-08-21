@@ -202,3 +202,8 @@ export const COUNTRIES = [
   { name: 'Zambia', code: 'ZMB' },
   { name: 'Zimbabwe', code: 'ZWE' },
 ];
+
+// Reverse lookup (ISO3 code -> display name), shared by the actor autocomplete in
+// EventStudyAnalysis.jsx and the country-dossier view - single source of truth so both stay in
+// sync rather than each building their own copy of this map.
+export const COUNTRY_CODE_TO_NAME = new Map(COUNTRIES.map((c) => [c.code, c.name]));

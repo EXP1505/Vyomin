@@ -8,7 +8,7 @@ import { getRingTexture } from './markerTextures';
 // more flashpoints than are visually distinguishable on a globe.
 const MAX_MARKERS = 150;
 
-export function ConflictMarkers({ conflicts = [] }) {
+export function ConflictMarkers({ conflicts = [], onSelect }) {
   const groupRef = useRef();
   const texture = useMemo(() => getRingTexture('#ffb020'), []);
 
@@ -21,6 +21,7 @@ export function ConflictMarkers({ conflicts = [] }) {
           id: c.id ?? c.gdeltEventId ?? i,
           position: latLonToVector3(c.latitude, c.longitude, 2.015),
           phase: (i * 0.37) % (Math.PI * 2),
+          conflict: c,
         })),
     [conflicts]
   );
@@ -42,7 +43,14 @@ export function ConflictMarkers({ conflicts = [] }) {
   return (
     <group ref={groupRef}>
       {points.map((p) => (
-        <sprite key={p.id} position={p.position}>
+        <sprite
+          key={p.id}
+          position={p.position}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect?.(p.conflict);
+          }}
+        >
           <spriteMaterial map={texture} transparent depthWrite={false} />
         </sprite>
       ))}
