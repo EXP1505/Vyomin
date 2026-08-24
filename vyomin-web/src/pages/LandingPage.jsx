@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Background } from '../components/design/Background';
+import { Logo } from '../components/design/Logo';
 import { Panel } from '../components/design/Panel';
 import { AuthPanel } from '../components/AuthPanel';
 import { useAuthStore } from '../store/authStore';
@@ -49,10 +50,7 @@ export function LandingPage() {
 
       <div className="relative z-10 flex flex-grow flex-col">
         <header className="flex h-14 shrink-0 items-center px-5 border-b" style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)' }}>
-          <span
-            className="inline-block h-2.5 w-2.5 rotate-45"
-            style={{ background: 'var(--accent)', animation: 'vyomin-pulse 2.4s ease-in-out infinite' }}
-          />
+          <Logo size={36} />
           <span className="ml-3 text-sm font-semibold tracking-[0.2em]" style={{ color: 'var(--text)' }}>VYOMIN</span>
         </header>
 

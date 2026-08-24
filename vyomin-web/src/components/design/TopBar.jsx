@@ -1,3 +1,5 @@
+import { Logo } from './Logo';
+
 export function TopBar({ navItems, activeTab, onNavigate, statusLabel, statusOk = true, children }) {
   return (
     <header
@@ -5,13 +7,7 @@ export function TopBar({ navItems, activeTab, onNavigate, statusLabel, statusOk 
       style={{ borderColor: 'var(--hairline)', background: 'var(--panel-2)' }}
     >
       <div className="flex items-center gap-3">
-        <span
-          className="inline-block h-2.5 w-2.5 rotate-45"
-          style={{
-            background: 'var(--accent)',
-            animation: 'vyomin-pulse 2.4s ease-in-out infinite',
-          }}
-        />
+        <Logo size={36} />
         <span className="text-sm font-semibold tracking-[0.2em]" style={{ color: 'var(--text)' }}>
           VYOMIN
         </span>
