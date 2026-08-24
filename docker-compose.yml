@@ -8,6 +8,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vyomin_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-vyomin_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
   neo4j:
@@ -18,12 +20,16 @@ services:
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH}
       NEO4J_server_config_strict__validation_enabled: "false"
+    volumes:
+      - neo4j_data:/data
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
 
   core-api:
@@ -50,3 +56,8 @@ services:
     depends_on:
       - core-api
     restart: unless-stopped
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  redis_data:

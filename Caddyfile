@@ -1,0 +1,3 @@
+{$DOMAIN} {
+	reverse_proxy vyomin-web:80
+}
