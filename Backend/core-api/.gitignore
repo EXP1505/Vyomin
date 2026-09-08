@@ -33,3 +33,4 @@ build/
 .vscode/
 
 *.csv
+!src/main/resources/aircraft-database-complete-2025-08.csv
