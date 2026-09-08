@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Panel } from '../components/design/Panel';
 import { COUNTRY_CODE_TO_NAME } from '../data/countries';
 import { WindowCard } from '../components/analysis/windowSummary';
+import { API_BASE } from '../lib/api';
 
 // Same defaults EventStudyAnalysis.jsx uses (WINDOWS/basket/date range) - the dossier is meant to
 // give an at-a-glance read with zero configuration, so it doesn't expose a form.
@@ -119,7 +120,7 @@ export default function CountryDossier() {
     setError(null);
     setData(null);
 
-    const url = `/api/analysis/country-dossier?code=${encodeURIComponent(code)}&dateFrom=${DEFAULT_DATE_FROM}&dateTo=${DEFAULT_DATE_TO}&basket=${encodeURIComponent(DEFAULT_BASKET)}`;
+    const url = `${API_BASE}/api/analysis/country-dossier?code=${encodeURIComponent(code)}&dateFrom=${DEFAULT_DATE_FROM}&dateTo=${DEFAULT_DATE_TO}&basket=${encodeURIComponent(DEFAULT_BASKET)}`;
     fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`Request failed (${res.status})`);

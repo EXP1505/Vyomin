@@ -7,6 +7,7 @@ import {
   significanceStyle, directionBadge, toneChipStyle, classifyPValue, PVALUE_CLASSIFICATIONS,
   Modal, DivergingBar, DonutRing, PValueBar, CoverageBar, WindowCard, ExplainModalContent,
 } from '../components/analysis/windowSummary';
+import { API_BASE } from '../lib/api';
 
 // No ErrorBoundary exists anywhere else in this app - without one, a render-time exception here
 // (e.g. an unexpected field shape in a sweep response) throws past React with nothing catching
@@ -570,7 +571,7 @@ export default function EventStudyAnalysis() {
         windows: WINDOWS,
       };
 
-      const res = await fetch('/api/analysis/event-study', {
+      const res = await fetch(`${API_BASE}/api/analysis/event-study`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -672,7 +673,7 @@ export default function EventStudyAnalysis() {
         windows: WINDOWS,
       };
 
-      const res = await fetch('/api/analysis/event-study-sweep', {
+      const res = await fetch(`${API_BASE}/api/analysis/event-study-sweep`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

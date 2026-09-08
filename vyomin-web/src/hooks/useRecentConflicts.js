@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
+import { API_BASE } from '../lib/api';
 
-const API_BASE = 'http://localhost:8080/api/intel';
 const POLL_MS = 20000;
 
 // Bounded /conflicts/recent read (see ConflictRepository.findTop300ByOrderByDateReportedDesc) -
@@ -11,7 +11,7 @@ export function useRecentConflicts() {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      fetch(`${API_BASE}/conflicts/recent`)
+      fetch(`${API_BASE}/api/intel/conflicts/recent`)
         .then((r) => (r.ok ? r.json() : []))
         .then((data) => {
           if (!cancelled && Array.isArray(data)) setConflicts(data);

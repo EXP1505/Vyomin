@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+import { API_BASE } from '../lib/api';
 
 export const GraphView = () => {
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
@@ -18,7 +19,7 @@ export const GraphView = () => {
   useEffect(() => {
     const fetchGraphData = async () => {
       try {
-        const response = await fetch('/api/intel/risk-path/defaultUser', {
+        const response = await fetch(`${API_BASE}/api/intel/risk-path/defaultUser`, {
           headers: {
             'Content-Type': 'application/json'
           }

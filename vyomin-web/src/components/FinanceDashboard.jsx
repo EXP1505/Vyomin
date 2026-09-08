@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useBookmarkStore, useBookmarkedStockSymbols } from '../store/bookmarkStore';
 import { useRecentConflicts } from '../hooks/useRecentConflicts';
+import { API_BASE } from '../lib/api';
 import StockDetailModal from './StockDetailModal';
 import { Panel } from './design/Panel';
 import { Sparkline } from './design/Sparkline';
@@ -153,7 +154,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     const withSeries = await Promise.all(
       rows.map(async (q) => {
         try {
-          const res = await fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, {
+          const res = await fetch(`${API_BASE}/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, {
             headers: authHeaders,
           });
           const json = await res.json();
@@ -173,7 +174,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     setError(null);
     setResultsLabel('Trending');
     try {
-      const res = await fetch('/api/intel/finance/trending', {
+      const res = await fetch(`${API_BASE}/api/intel/finance/trending`, {
         headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
 
@@ -207,7 +208,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
       const quotes = await Promise.all(
         symbols.map(async (symbol) => {
           try {
-            const res = await fetch(`/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, {
+            const res = await fetch(`${API_BASE}/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, {
               headers: { 'Content-Type': 'application/json', ...authHeaders },
             });
             if (!res.ok) return null;
@@ -238,7 +239,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, {
+      const res = await fetch(`${API_BASE}/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, {
         headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
 
@@ -267,7 +268,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     setNewsLoading(true);
     setNewsError(null);
     try {
-      const res = await fetch('/api/intel/finance/market-news', { headers: authHeaders });
+      const res = await fetch(`${API_BASE}/api/intel/finance/market-news`, { headers: authHeaders });
       const payload = await res.json();
       if (!res.ok) throw new Error(payload?.error || `Failed to fetch news (${res.status})`);
       const items = Array.isArray(payload?.data) ? payload.data : [];
@@ -283,7 +284,7 @@ export const FinanceDashboard = ({ fullPage = false }) => {
     setMoversLoading(true);
     setMoversError(null);
     try {
-      const res = await fetch(`/api/intel/finance/movers?period=${encodeURIComponent(period)}`, { headers: authHeaders });
+      const res = await fetch(`${API_BASE}/api/intel/finance/movers?period=${encodeURIComponent(period)}`, { headers: authHeaders });
       const payload = await res.json();
       if (!res.ok) throw new Error(payload?.error || `Failed to fetch movers (${res.status})`);
       setMovers({ gainers: payload?.data?.gainers || [], losers: payload?.data?.losers || [] });

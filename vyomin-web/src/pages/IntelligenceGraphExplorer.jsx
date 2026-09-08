@@ -5,8 +5,9 @@ import SockJS from 'sockjs-client';
 import { useAuthStore } from '../store/authStore';
 import { useBookmarkStore } from '../store/bookmarkStore';
 import { useLocation } from 'react-router-dom';
+import { API_BASE as BASE_URL } from '../lib/api';
 
-const API_BASE = 'http://localhost:8080/api/intel';
+const API_BASE = `${BASE_URL}/api/intel`;
 const WS_URL = import.meta.env.VITE_WS_TELEMETRY_URL || 'http://localhost:8080/ws-telemetry';
 const MAX_AUTO_RETRIES_PER_QUERY = 1;
 

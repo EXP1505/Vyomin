@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
+import { API_BASE } from '../lib/api';
 
 export function AuthPanel({ onSuccess }) {
   const [mode, setMode] = useState('login');
@@ -13,7 +14,7 @@ export function AuthPanel({ onSuccess }) {
     setStatus('working');
     setErrorMsg(null);
     try {
-      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/signup';
+      const endpoint = mode === 'login' ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/auth/signup`;
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -34,7 +35,7 @@ export function AuthPanel({ onSuccess }) {
   const handleGoogleSuccess = async (credentialResponse) => {
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/auth/google', {
+      const res = await fetch(`${API_BASE}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken: credentialResponse.credential }),

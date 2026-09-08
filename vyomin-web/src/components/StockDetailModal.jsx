@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useBookmarkStore } from '../store/bookmarkStore';
+import { API_BASE } from '../lib/api';
 
 const formatEpochSeconds = (epochSeconds) => {
 
@@ -268,9 +269,9 @@ export default function StockDetailModal({ symbol, onClose, onJumpToGraph }) {
         };
 
         const [pRes, cRes, nRes] = await Promise.all([
-          fetch(`/api/intel/finance/profile?symbol=${encodeURIComponent(symbol)}`, { headers }),
-          fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(symbol)}`, { headers }),
-          fetch(`/api/intel/finance/news?symbol=${encodeURIComponent(symbol)}`, { headers }),
+          fetch(`${API_BASE}/api/intel/finance/profile?symbol=${encodeURIComponent(symbol)}`, { headers }),
+          fetch(`${API_BASE}/api/intel/finance/candles?symbol=${encodeURIComponent(symbol)}`, { headers }),
+          fetch(`${API_BASE}/api/intel/finance/news?symbol=${encodeURIComponent(symbol)}`, { headers }),
         ]);
 
         const [pJson, cJson, nJson] = await Promise.all([pRes.json(), cRes.json(), nRes.json()]);
@@ -314,7 +315,7 @@ export default function StockDetailModal({ symbol, onClose, onJumpToGraph }) {
       return;
     }
     let cancelled = false;
-    fetch(`http://localhost:8080/api/intel/search?q=${encodeURIComponent(name)}&type=conflict`)
+    fetch(`${API_BASE}/api/intel/search?q=${encodeURIComponent(name)}&type=conflict`)
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;

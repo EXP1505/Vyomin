@@ -12,8 +12,9 @@ import { useRecentConflicts } from '../hooks/useRecentConflicts';
 import { useAuthStore } from '../store/authStore';
 import { useBookmarkedStockSymbols } from '../store/bookmarkStore';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE as BASE_URL } from '../lib/api';
 
-const API_BASE = 'http://localhost:8080/api/intel';
+const API_BASE = `${BASE_URL}/api/intel`;
 const TICKER_POLL_MS = 20000;
 const ALL_FLIGHT_TYPES = new Set(['MILITARY', 'CARGO', 'HELICOPTER', 'DRONE', 'PRIVATE', 'UNKNOWN']);
 const MILITARY_ONLY = new Set(['MILITARY']);
@@ -33,7 +34,7 @@ function useTrendingTickers() {
       Promise.all(
         rows.map(async (q) => {
           try {
-            const res = await fetch(`/api/intel/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, { headers });
+            const res = await fetch(`${API_BASE}/finance/candles?symbol=${encodeURIComponent(q.symbol)}`, { headers });
             const json = await res.json();
             const closes = json?.data?.c || json?.c || [];
             return { ...q, closes: closes.slice(-20) };
@@ -50,7 +51,7 @@ function useTrendingTickers() {
           const quotes = await Promise.all(
             bookmarkedSymbols.slice(0, 4).map(async (symbol) => {
               try {
-                const res = await fetch(`/api/intel/finance/search?symbol=${encodeURIComponent(symbol)}`, { headers });
+                const res = await fetch(`${API_BASE}/finance/search?symbol=${encodeURIComponent(symbol)}`, { headers });
                 const json = await res.json();
                 return json?.data || null;
               } catch {
@@ -60,7 +61,7 @@ function useTrendingTickers() {
           );
           top = quotes.filter(Boolean);
         } else {
-          const res = await fetch('/api/intel/finance/trending', { headers });
+          const res = await fetch(`${API_BASE}/finance/trending`, { headers });
           const payload = await res.json();
           top = (payload?.data || []).slice(0, 4);
         }
