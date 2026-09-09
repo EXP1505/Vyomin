@@ -17,4 +17,8 @@ COPY --from=builder /app/target/core-api-0.0.1-SNAPSHOT.jar app.jar
 # However, spring-dotenv looks for .env in the root directory. 
 # The best practice is to pass it via compose, but we'll let spring handle it.
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# preferIPv4Stack: some hosts (e.g. Render) have no outbound IPv6 route. Supabase/Upstash
+# hostnames resolve to both A and AAAA records, and the JVM's default IPv6-first resolution
+# order picks the unreachable AAAA address, failing with "Network unreachable" before ever
+# trying the IPv4 one. Forcing IPv4-only skips straight to the address that actually works.
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-jar", "app.jar"]
