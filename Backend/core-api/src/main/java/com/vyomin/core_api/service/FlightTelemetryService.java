@@ -168,19 +168,31 @@ public class FlightTelemetryService {
     private List<FlightTelemetry> fetchRealFlights() throws Exception {
         List<FlightTelemetry> flights = new ArrayList<>();
 
-        // ensure we have a valid token — throws if auth fails
+        // auth.opensky-network.org (the OAuth token endpoint) appears to block requests from
+        // datacenter/cloud IP ranges - the plain data endpoint (opensky-network.org) is a
+        // different host and isn't guarded the same way. Rather than aborting the whole cycle
+        // when the token endpoint is unreachable, fall back to an anonymous (unauthenticated)
+        // request - OpenSky allows this at a lower rate limit, which a 5-minute poll fits under.
+        boolean authenticated = true;
         if (System.currentTimeMillis() > tokenExpirationTime) {
-            refreshAccessToken();
+            try {
+                refreshAccessToken();
+            } catch (Exception e) {
+                log.warn("OpenSky token refresh failed ({}); falling back to anonymous access", e.getMessage());
+                authenticated = false;
+            }
         }
 
         // fetch real flight data
-        log.debug("Fetching flights from {} with token [{}...]", dataUrl,
-                cachedAccessToken != null ? cachedAccessToken.substring(0, Math.min(10, cachedAccessToken.length())) : "null");
-        String response = restClient.get()
-                .uri(dataUrl)
-                .header("Authorization", "Bearer " + cachedAccessToken)
-                .retrieve()
-                .body(String.class);
+        var requestSpec = restClient.get().uri(dataUrl);
+        if (authenticated) {
+            log.debug("Fetching flights from {} with token [{}...]", dataUrl,
+                    cachedAccessToken != null ? cachedAccessToken.substring(0, Math.min(10, cachedAccessToken.length())) : "null");
+            requestSpec = requestSpec.header("Authorization", "Bearer " + cachedAccessToken);
+        } else {
+            log.debug("Fetching flights from {} anonymously (no token)", dataUrl);
+        }
+        String response = requestSpec.retrieve().body(String.class);
 
         if (response != null && !response.isEmpty()) {
             JsonNode rootNode = objectMapper.readTree(response);
