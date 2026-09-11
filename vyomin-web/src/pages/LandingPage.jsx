@@ -8,10 +8,7 @@ import { useAuthStore } from '../store/authStore';
 import { useBookmarkStore } from '../store/bookmarkStore';
 
 const FEATURES = [
-  {
-    title: 'Radar Telemetry',
-    body: 'Live aircraft tracks over a 3D globe, sourced from real flight telemetry - military, cargo, and civilian traffic as it moves.',
-  },
+  // Radar Telemetry intentionally omitted - see AppLayout.jsx's NAV_ITEMS comment.
   {
     title: 'Intelligence Graph',
     body: 'Explore how countries, conflicts, companies, and sectors connect to each other, built from live geopolitical event data.',

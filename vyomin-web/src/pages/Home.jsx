@@ -111,13 +111,9 @@ function useGraphCounts() {
   );
 }
 
-function StatsStrip({ trackCount, entityCount, marketCount }) {
+function StatsStrip({ entityCount, marketCount }) {
   return (
     <Panel className="flex flex-wrap items-center justify-center gap-6 px-6 py-4">
-      <span className="font-mono-data text-sm" style={{ color: 'var(--text)' }}>
-        <CountUp value={trackCount} /> <span style={{ color: 'var(--text-faint)' }}>aircraft tracked</span>
-      </span>
-      <span style={{ color: 'var(--hairline)' }}>·</span>
       <span className="font-mono-data text-sm" style={{ color: 'var(--text)' }}>
         <CountUp value={entityCount} /> <span style={{ color: 'var(--text-faint)' }}>entities mapped</span>
       </span>
@@ -288,14 +284,16 @@ export function Home() {
         </Panel>
       </div>
 
-      <StatsStrip trackCount={flights.length} entityCount={graphCounts.nodes} marketCount={tickers.length} />
+      <StatsStrip entityCount={graphCounts.nodes} marketCount={tickers.length} />
 
       {/* auto-rows fixes each row's height regardless of column count at the current breakpoint -
           a plain fixed-height container (the previous approach) only worked by coincidence when
           every card sat in a single row; it silently squashed multi-row layouts (e.g. the 2-col
           breakpoint this 4th card introduces, and pre-existing single-column mobile). */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4 auto-rows-[220px]">
-        <RadarPreviewCard onNavigate={onNavigate} flights={flights} />
+      {/* RadarPreviewCard intentionally omitted here - see AppLayout.jsx's NAV_ITEMS comment on
+          why aircraft tracking is hidden (OpenSky blocks Render's/Cloudflare's IPs). Component
+          and route are untouched, just not linked to from anywhere. */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 auto-rows-[220px]">
         <GraphPreviewCard onNavigate={onNavigate} conflicts={recentConflicts} graphCounts={graphCounts} />
         <FinancePreviewCard onNavigate={onNavigate} tickers={tickers} />
         <EventStudyPreviewCard onNavigate={onNavigate} />
