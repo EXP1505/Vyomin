@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -33,7 +34,20 @@ public class FlightTelemetryService {
     //redis key to store the flights data
     private final String REDIS_KEY = "FLIGHTS_LATEST";
     //rest client for API calls
-    private final RestClient restClient = RestClient.create();
+    // Explicit timeouts: RestClient.create()'s default factory has none, so a slow/unresponsive
+    // OpenSky endpoint (seen from some hosts, e.g. Render) hangs this call indefinitely instead
+    // of failing - which looked like the scheduled fetch silently never completing, with no
+    // error ever logged to explain why aircraft count stayed at 0.
+    private final RestClient restClient = RestClient.builder()
+            .requestFactory(timeoutRequestFactory())
+            .build();
+
+    private static SimpleClientHttpRequestFactory timeoutRequestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(15_000);
+        return factory;
+    }
     //object mapper for JSON parsing
     private final ObjectMapper objectMapper = new ObjectMapper();
     //OpenSky Network credentials
