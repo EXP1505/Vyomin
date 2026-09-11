@@ -9,7 +9,10 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -277,35 +280,47 @@ public class GdeltHistoricalBackfillService {
 
     private List<String> fetchAndFilterMasterFileList(LocalDate from, LocalDate to) {
         log.info("Downloading GDELT master file list: {}", masterFileListUrl);
-        String body = restClient.get().uri(masterFileListUrl).retrieve().body(String.class);
-        if (body == null || body.isBlank()) {
-            throw new IllegalStateException("GDELT masterfilelist.txt was empty");
-        }
-
+        // masterfilelist.txt lists every file GDELT has published since 2015 - hundreds of
+        // thousands of lines, tens of MB of text. Reading it into one String (the previous
+        // approach) OOM-killed the whole app on Render's memory-capped instance before it ever
+        // got to filtering. Stream it line-by-line instead - only the (small) filtered result
+        // list needs to live in memory, not the raw response.
         List<String> matches = new ArrayList<>();
-        for (String line : body.split("\n")) {
-            if (!line.contains(".export.CSV.zip")) {
-                continue;
-            }
-            String[] parts = line.trim().split("\\s+");
-            if (parts.length < 3) {
-                continue;
-            }
-            String url = parts[2];
-            int slash = url.lastIndexOf('/');
-            String filename = slash >= 0 ? url.substring(slash + 1) : url;
-            if (filename.length() < 14) {
-                continue;
-            }
-            try {
-                LocalDate fileDate = LocalDateTime.parse(filename.substring(0, 14), FILE_TS_FORMAT).toLocalDate();
-                if (!fileDate.isBefore(from) && !fileDate.isAfter(to)) {
-                    matches.add(GdeltIngestionService.toHttps(url));
+        boolean[] sawAnyLine = {false};
+        restClient.get().uri(masterFileListUrl).exchange((request, response) -> {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sawAnyLine[0] = true;
+                    if (!line.contains(".export.CSV.zip")) {
+                        continue;
+                    }
+                    String[] parts = line.trim().split("\\s+");
+                    if (parts.length < 3) {
+                        continue;
+                    }
+                    String url = parts[2];
+                    int slash = url.lastIndexOf('/');
+                    String filename = slash >= 0 ? url.substring(slash + 1) : url;
+                    if (filename.length() < 14) {
+                        continue;
+                    }
+                    try {
+                        LocalDate fileDate = LocalDateTime.parse(filename.substring(0, 14), FILE_TS_FORMAT).toLocalDate();
+                        if (!fileDate.isBefore(from) && !fileDate.isAfter(to)) {
+                            matches.add(GdeltIngestionService.toHttps(url));
+                        }
+                    } catch (Exception ignored) {
+                        // Unparseable filename timestamp on this one line - skip it rather than
+                        // abort the whole filter over a single malformed masterfilelist.txt entry.
+                    }
                 }
-            } catch (Exception ignored) {
-                // Unparseable filename timestamp on this one line - skip it rather than abort the
-                // whole filter over a single malformed masterfilelist.txt entry.
             }
+            return null;
+        });
+        if (!sawAnyLine[0]) {
+            throw new IllegalStateException("GDELT masterfilelist.txt was empty");
         }
         // URLs embed yyyyMMddHHmmss right after the last '/', so lexicographic order is
         // chronological order - no need to re-parse timestamps just to sort.
