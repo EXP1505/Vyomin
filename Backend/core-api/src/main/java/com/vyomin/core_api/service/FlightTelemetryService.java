@@ -45,7 +45,11 @@ public class FlightTelemetryService {
     private static SimpleClientHttpRequestFactory timeoutRequestFactory() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(15_000);
+        // Requests are proxied through a Cloudflare Worker (Render -> Worker -> OpenSky -> Worker
+        // -> Render), and OpenSky's states/all payload is often 1-3MB - that extra hop plus a
+        // large body needs more than 15s to read in full, even though the connection itself
+        // establishes quickly.
+        factory.setReadTimeout(30_000);
         return factory;
     }
     //object mapper for JSON parsing
