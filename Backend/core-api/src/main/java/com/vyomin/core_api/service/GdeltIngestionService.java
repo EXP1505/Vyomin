@@ -264,6 +264,13 @@ public class GdeltIngestionService {
     private Map<String, String> cameoTypeLookup = Map.of();
     private Map<String, String> cameoEventCodeLookup = Map.of();
 
+    // GDELT's manifest/master-list files themselves list their zip URLs as plain http:// - GDELT
+    // 301-redirects those to https, and Java's HttpURLConnection won't auto-follow a cross-scheme
+    // redirect, so every zip download would otherwise silently come back empty. Upgrade in place.
+    static String toHttps(String url) {
+        return url.startsWith("http://") ? "https://" + url.substring("http://".length()) : url;
+    }
+
     private static RestClient buildTimeoutBoundRestClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(GDELT_TIMEOUT_MS);
@@ -606,6 +613,7 @@ public class GdeltIngestionService {
                 .filter(parts -> parts.length >= 3)
                 .map(parts -> parts[2])
                 .findFirst()
+                .map(GdeltIngestionService::toHttps)
                 .orElseThrow(() -> new IOException("Could not find an export.CSV.zip entry in GDELT manifest"));
 
         log.info("Downloading GDELT events batch: {}", zipUrl);

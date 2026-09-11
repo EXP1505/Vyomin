@@ -35,16 +35,20 @@ spring:
       max-connection-lifetime: 30m
       idle-time-before-connection-test: 30s
 gdelt:
+  # https, not http: GDELT 301-redirects every http:// request to https://, and Java's
+  # HttpURLConnection (which our RestClient uses) refuses to auto-follow a redirect that changes
+  # protocol - it silently returns the empty, zero-length 301 response instead, which is what
+  # made every fetch here look like "the manifest/master list/CAMEO file was empty".
   manifest:
-    url: ${GDELT_MANIFEST_URL:http://data.gdeltproject.org/gdeltv2/lastupdate.txt}
-    master-list-url: ${GDELT_MASTER_LIST_URL:http://data.gdeltproject.org/gdeltv2/masterfilelist.txt}
+    url: ${GDELT_MANIFEST_URL:https://data.gdeltproject.org/gdeltv2/lastupdate.txt}
+    master-list-url: ${GDELT_MASTER_LIST_URL:https://data.gdeltproject.org/gdeltv2/masterfilelist.txt}
   cameo:
     country:
-      url: ${GDELT_CAMEO_COUNTRY_URL:http://data.gdeltproject.org/documentation/CAMEO.country.txt}
+      url: ${GDELT_CAMEO_COUNTRY_URL:https://data.gdeltproject.org/documentation/CAMEO.country.txt}
     type:
-      url: ${GDELT_CAMEO_TYPE_URL:http://data.gdeltproject.org/documentation/CAMEO.type.txt}
+      url: ${GDELT_CAMEO_TYPE_URL:https://data.gdeltproject.org/documentation/CAMEO.type.txt}
     event:
-      url: ${GDELT_CAMEO_EVENT_URL:http://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
+      url: ${GDELT_CAMEO_EVENT_URL:https://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
   conflict:
     retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:180}
 api:

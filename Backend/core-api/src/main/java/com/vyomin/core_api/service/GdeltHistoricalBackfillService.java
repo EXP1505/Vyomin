@@ -89,9 +89,8 @@ public class GdeltHistoricalBackfillService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(TIMEOUT_MS);
         factory.setReadTimeout(TIMEOUT_MS);
-        // Same fix as GdeltIngestionService's client: GDELT's CDN silently returns an empty 200
-        // for requests carrying Java's default "Java/21.x..." User-Agent (a bot signature), which
-        // is what made masterfilelist.txt come back "empty" here too.
+        // User-Agent turned out not to be the actual cause of the "empty" responses (see
+        // toHttps() below for the real one) but there's no harm leaving a normal-looking one.
         return RestClient.builder()
                 .requestFactory(factory)
                 .defaultHeader("User-Agent",
@@ -301,7 +300,7 @@ public class GdeltHistoricalBackfillService {
             try {
                 LocalDate fileDate = LocalDateTime.parse(filename.substring(0, 14), FILE_TS_FORMAT).toLocalDate();
                 if (!fileDate.isBefore(from) && !fileDate.isAfter(to)) {
-                    matches.add(url);
+                    matches.add(GdeltIngestionService.toHttps(url));
                 }
             } catch (Exception ignored) {
                 // Unparseable filename timestamp on this one line - skip it rather than abort the
