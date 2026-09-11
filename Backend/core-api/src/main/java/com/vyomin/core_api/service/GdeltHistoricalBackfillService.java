@@ -89,7 +89,14 @@ public class GdeltHistoricalBackfillService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(TIMEOUT_MS);
         factory.setReadTimeout(TIMEOUT_MS);
-        return RestClient.builder().requestFactory(factory).build();
+        // Same fix as GdeltIngestionService's client: GDELT's CDN silently returns an empty 200
+        // for requests carrying Java's default "Java/21.x..." User-Agent (a bot signature), which
+        // is what made masterfilelist.txt come back "empty" here too.
+        return RestClient.builder()
+                .requestFactory(factory)
+                .defaultHeader("User-Agent",
+                        "Mozilla/5.0 (compatible; VyominBot/1.0; +https://vyomin-web.onrender.com)")
+                .build();
     }
 
     public Map<String, Object> ingestHistoricalRange(LocalDate from, LocalDate to) {
