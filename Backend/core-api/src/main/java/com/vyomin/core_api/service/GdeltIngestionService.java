@@ -268,7 +268,15 @@ public class GdeltIngestionService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(GDELT_TIMEOUT_MS);
         factory.setReadTimeout(GDELT_TIMEOUT_MS);
-        return RestClient.builder().requestFactory(factory).build();
+        return RestClient.builder()
+                .requestFactory(factory)
+                // Java's default HTTP client identifies itself as "Java/21.x..." - GDELT's CDN
+                // silently returns an empty 200 (not an error) for requests carrying that
+                // signature, which is exactly what was making the manifest/CAMEO lookups all
+                // come back "empty" rather than failing loudly. A browser-like UA fixes that.
+                .defaultHeader("User-Agent",
+                        "Mozilla/5.0 (compatible; VyominBot/1.0; +https://vyomin-web.onrender.com)")
+                .build();
     }
 
     // Staggered against IntelligenceIngestionService's two scheduled jobs (ingestGdeltNews,
