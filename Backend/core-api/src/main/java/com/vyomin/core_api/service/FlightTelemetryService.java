@@ -152,7 +152,11 @@ public class FlightTelemetryService {
         return cached instanceof List<?> list ? (List<FlightTelemetry>) list : List.of();
     }
 
-    @Scheduled(fixedRate = 300000)
+    // Disabled: OpenSky Network blocks traffic from both Render's and Cloudflare's IP ranges
+    // (confirmed by direct testing), so this fires every 5 minutes and never once succeeds -
+    // pure wasted memory/CPU on a 512MB instance. The Radar Telemetry UI is already hidden
+    // (see AppLayout.jsx's NAV_ITEMS comment); re-enable both together if fixed later.
+    // @Scheduled(fixedRate = 300000)
     public void fetchAndBroadcastFlights() {
         try {
             List<FlightTelemetry> flights = fetchRealFlights();

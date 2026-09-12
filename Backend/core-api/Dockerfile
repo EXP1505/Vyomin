@@ -21,4 +21,9 @@ EXPOSE 8080
 # hostnames resolve to both A and AAAA records, and the JVM's default IPv6-first resolution
 # order picks the unreachable AAAA address, failing with "Network unreachable" before ever
 # trying the IPv4 one. Forcing IPv4-only skips straight to the address that actually works.
-ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-jar", "app.jar"]
+# MaxRAMPercentage: the JVM's default container-aware heap sizing is a conservative ~25% of
+# available memory, which on a 512MB instance leaves the heap at roughly 128MB - too tight once
+# Spring, Hibernate, the Neo4j driver, and a handful of background schedulers are all resident,
+# and it was hitting a genuine OutOfMemoryError under normal load. This is a single-process
+# container with nothing else competing for memory, so let the heap use most of what's available.
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]

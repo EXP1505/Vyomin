@@ -57,7 +57,11 @@ public class IntelligenceIngestionService {
     // ingestOpenNetworkData below so the three background jobs don't all hit Neo4j at once on
     // startup - that pile-up was exhausting the connection pool and starving interactive search
     // requests of a connection.
-    @Scheduled(fixedRate = 900000, initialDelay = 120000)
+    // Disabled: GDELT's doc-search API rate-limits this to one request per 5 seconds and this
+    // job was already spaced 15 minutes apart, yet still got "429 Too Many Requests" on every
+    // single run - meaning it never once succeeds, it just burns memory/CPU on a 512MB instance
+    // for zero benefit. Re-enable only after solving the rate-limit (e.g. an actual API key).
+    // @Scheduled(fixedRate = 900000, initialDelay = 120000)
     public void ingestGdeltNews() {
         log.info("Starting GDELT news ingestion...");
         try {
@@ -175,7 +179,11 @@ public class IntelligenceIngestionService {
     }
 
     //scheduled to ingest real-time data from Open_Network API every 5 minutes
-    @Scheduled(fixedRate = 300000, initialDelay = 240000)
+    // Disabled: OpenSky Network blocks traffic from both Render's and Cloudflare's IP ranges
+    // (confirmed by direct testing - see FlightTelemetryService), so this call 404s/522s every
+    // time it runs, burning memory/CPU on a 512MB instance for zero benefit. Re-enable if a
+    // working data source is wired up later.
+    // @Scheduled(fixedRate = 300000, initialDelay = 240000)
     public void ingestOpenNetworkData() {
         log.info("Starting OpenSky Network real-time data ingestion...");
         try {
