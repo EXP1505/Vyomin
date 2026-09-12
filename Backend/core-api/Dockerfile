@@ -34,4 +34,11 @@ EXPOSE 8080
 # can't be the thing that pushes total memory over the container limit.
 # Xss: default per-thread stack is 1MB; with Tomcat's thread pool plus scheduler/driver threads,
 # smaller stacks measurably reduce native memory reserved just for thread stacks.
-ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-Xss512k", "-jar", "app.jar"]
+# MaxDirectMemorySize: without an explicit cap this defaults to the max heap size, meaning NIO
+# direct buffers (which Netty - underneath the Neo4j driver's TLS connections - allocates
+# off-heap, one buffer set per live connection) could balloon by another 322MB on top of
+# everything MemoryMXBean already reports, completely invisible to heap/non-heap logging. That
+# invisible-to-the-JVM's-own-accounting memory is what was actually pushing the container over its
+# 512MB limit even while logged heap+non-heap sat around 320MB. Capping it forces an explicit,
+# visible OutOfMemoryError instead of a silent container-level kill if it's ever exceeded.
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-XX:MaxDirectMemorySize=48m", "-Xss512k", "-jar", "app.jar"]

@@ -44,10 +44,14 @@ spring:
       username: ${NEO4J_AURA_USERNAME}
       password: ${NEO4J_AURA_PASSWORD}
     pool:
-      # AuraDB caps concurrent connections well below the driver's own default (100) - keep the
-      # local pool under that ceiling so we get a clean "wait for a slot" instead of AuraDB
-      # resetting connections out from under us mid-query ("Failed to write messages").
-      max-connection-pool-size: 20
+      # Each pooled connection is a live TLS-encrypted (neo4j+s://) socket backed by Netty, which
+      # allocates its own off-heap read/write buffers per channel - memory that never shows up in
+      # MemoryMXBean's heap/non-heap numbers (confirmed by logs: heap+non-heap topped out around
+      # 320MB, nowhere near the 512MB container limit, right before a restart) but absolutely
+      # counts against the container's real RSS. 20 concurrent encrypted connections was carrying
+      # far more off-heap buffer memory than this app's actual concurrency ever needs - this app
+      # realistically never has more than a couple of simultaneous Neo4j operations in flight.
+      max-connection-pool-size: 5
       connection-acquisition-timeout: 30s
       max-connection-lifetime: 30m
       idle-time-before-connection-test: 30s
