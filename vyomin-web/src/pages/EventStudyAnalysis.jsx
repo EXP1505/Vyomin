@@ -551,7 +551,30 @@ export default function EventStudyAnalysis() {
     () => form.basket.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean),
     [form.basket]
   );
-  const chartSymbol = basketList[0] || null;
+  // The chart previously always showed basketList[0] with no way to see any other basket
+  // member's price history - selectedTicker lets the user pick one, falling back to the first
+  // basket ticker when nothing's been picked yet (or the pick no longer exists in the basket).
+  const [selectedTicker, setSelectedTicker] = useState(null);
+  const chartSymbol = (selectedTicker && basketList.includes(selectedTicker)) ? selectedTicker : basketList[0] || null;
+
+  const fetchChartData = async (ticker) => {
+    if (!ticker) {
+      setChartCandles(null);
+      return;
+    }
+    setChartLoading(true);
+    try {
+      const cRes = await fetch(
+        `${API_BASE}/api/analysis/price-history?ticker=${encodeURIComponent(ticker)}&from=${form.dateFrom}&to=${form.dateTo}`
+      );
+      const cJson = await cRes.json();
+      setChartCandles(Array.isArray(cJson) ? cJson : null);
+    } catch {
+      setChartCandles(null);
+    } finally {
+      setChartLoading(false);
+    }
+  };
 
   const runAnalysis = async (e) => {
     e.preventDefault();
@@ -559,6 +582,7 @@ export default function EventStudyAnalysis() {
     setError(null);
     setResult(null);
     setChartCandles(null);
+    setSelectedTicker(null);
 
     try {
       const body = {
@@ -590,20 +614,7 @@ export default function EventStudyAnalysis() {
         actor2CountryCode: body.actor2CountryCode,
       });
 
-      if (chartSymbol) {
-        setChartLoading(true);
-        try {
-          const cRes = await fetch(
-            `${API_BASE}/api/analysis/price-history?ticker=${encodeURIComponent(chartSymbol)}&from=${form.dateFrom}&to=${form.dateTo}`
-          );
-          const cJson = await cRes.json();
-          setChartCandles(Array.isArray(cJson) ? cJson : null);
-        } catch {
-          setChartCandles(null);
-        } finally {
-          setChartLoading(false);
-        }
-      }
+      await fetchChartData(basketList[0] || null);
     } catch (err) {
       setError(err.message || 'Analysis failed');
     } finally {
@@ -842,8 +853,25 @@ export default function EventStudyAnalysis() {
 
           <Panel className="p-4">
             <div className="flex items-center justify-between mb-2 gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-dim)' }}>
-                {chartSymbol ? `${chartSymbol} — historical price_daily with event-date markers` : 'No ticker in basket'}
+              <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-dim)' }}>
+                {basketList.length > 1 ? (
+                  <select
+                    value={chartSymbol || ''}
+                    onChange={(e) => {
+                      setSelectedTicker(e.target.value);
+                      fetchChartData(e.target.value);
+                    }}
+                    className="bg-transparent border px-2 py-1 text-sm font-mono-data"
+                    style={{ borderColor: 'var(--hairline)', color: 'var(--text)' }}
+                  >
+                    {basketList.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>{chartSymbol || 'No ticker in basket'}</span>
+                )}
+                <span>— historical price_daily with event-date markers</span>
               </div>
               <div className="text-xs shrink-0" style={{ color: 'var(--text-faint)' }}>
                 {eventMarkers.length} distinct event trading days
