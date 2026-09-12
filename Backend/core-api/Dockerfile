@@ -25,5 +25,13 @@ EXPOSE 8080
 # available memory, which on a 512MB instance leaves the heap at roughly 128MB - too tight once
 # Spring, Hibernate, the Neo4j driver, and a handful of background schedulers are all resident,
 # and it was hitting a genuine OutOfMemoryError under normal load. This is a single-process
-# container with nothing else competing for memory, so let the heap use most of what's available.
-ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]
+# container with nothing else competing for memory, so let the heap use most of what's available -
+# but not so much that heap + metaspace + thread stacks + native buffers (Neo4j driver, Tomcat,
+# WebSocket) can exceed the container's hard 512MB limit, which gets the whole process silently
+# SIGKILL'd by Render with no exception ever logged (looks like a random crash/restart, not an
+# app error). 65% leaves real headroom for everything outside the heap.
+# MaxMetaspaceSize: without a cap, metaspace can grow unbounded as classes load - bound it so it
+# can't be the thing that pushes total memory over the container limit.
+# Xss: default per-thread stack is 1MB; with Tomcat's thread pool plus scheduler/driver threads,
+# smaller stacks measurably reduce native memory reserved just for thread stacks.
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-Xss512k", "-jar", "app.jar"]

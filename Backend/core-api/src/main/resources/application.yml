@@ -1,3 +1,14 @@
+server:
+  tomcat:
+    threads:
+      # Default is 200 - each thread reserves its own stack, so under any concurrent load spike
+      # the JVM can reserve far more native memory than a 512MB instance actually has, on top of
+      # the heap. This box realistically never serves more than a handful of concurrent requests,
+      # so cap it low enough to keep total process memory predictable and avoid the container's
+      # OOM-kill (a silent SIGKILL with no exception logged - just the process vanishing and
+      # Render restarting it, which is what free-tier "random" restarts actually are).
+      max: 20
+      min-spare: 4
 spring:
   application:
     name: core-api
@@ -6,6 +17,12 @@ spring:
     username: ${POSTGRES_USER:vyomin_admin}
     password: ${POSTGRES_PASSWORD:password}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Default max is 10, spread across a single-process, single-CPU-fraction instance that also
+      # runs a Neo4j driver pool and a Tomcat thread pool - each idle Postgres connection still
+      # costs native memory. 5 is plenty for this app's actual concurrency.
+      maximum-pool-size: 5
+      minimum-idle: 2
   jpa:
     hibernate:
       ddl-auto: update
