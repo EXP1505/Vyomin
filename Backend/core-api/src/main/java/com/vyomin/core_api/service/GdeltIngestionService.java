@@ -324,13 +324,23 @@ public class GdeltIngestionService {
      * tier's 200k-node cap - this is what actually keeps the free tier usable long-term, not the
      * size of the country whitelist.
      */
+    // Small enough that even a worst-case backlog (months of unpruned growth) deletes in well
+    // under Aura's own query timeout, and releases the connection back to the pool between
+    // batches instead of holding it for one huge transaction.
+    private static final long PRUNE_BATCH_SIZE = 2000;
+
     public long pruneOldConflicts() {
         LocalDate cutoff = LocalDate.now().minusDays(conflictRetentionDays);
-        long deleted = conflictRepository.deleteByDateReportedBefore(cutoff);
-        if (deleted > 0) {
-            log.info("Pruned {} Conflict nodes older than {} ({} day retention)", deleted, cutoff, conflictRetentionDays);
+        long totalDeleted = 0;
+        long deletedThisBatch;
+        do {
+            deletedThisBatch = conflictRepository.deleteByDateReportedBefore(cutoff, PRUNE_BATCH_SIZE);
+            totalDeleted += deletedThisBatch;
+        } while (deletedThisBatch == PRUNE_BATCH_SIZE);
+        if (totalDeleted > 0) {
+            log.info("Pruned {} Conflict nodes older than {} ({} day retention)", totalDeleted, cutoff, conflictRetentionDays);
         }
-        return deleted;
+        return totalDeleted;
     }
 
     /**

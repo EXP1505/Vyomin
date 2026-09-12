@@ -46,11 +46,16 @@ public interface ConflictRepository extends Neo4jRepository<Conflict, Long> {
     /**
      * Keeps AuraDB free-tier node count bounded: without this, GDELT ingestion running every 15
      * minutes forever accumulates Conflict nodes indefinitely and eventually exhausts the
-     * 200k-node free-tier cap regardless of how many countries are whitelisted. Widening in the
-     * cutoff-less MATCH lets the DB batch/stream the delete instead of loading every match into
-     * the JVM first. Returns the deleted count purely for logging - the delete itself doesn't
-     * depend on it.
+     * 200k-node free-tier cap regardless of how many countries are whitelisted.
+     *
+     * LIMIT $batchSize caps this to one bounded transaction instead of one that DETACH DELETEs
+     * every matching node at once - a single unbounded delete against a large backlog (a fresh
+     * cutoff after months without pruning, or a lowered retention-days) held a connection/Aura's
+     * query resources for so long it starved every other request on the pool, which is what
+     * actually took the app down (a batch-save failing with "Unable to acquire connection from
+     * the pool" right after a 197k-node single-shot prune, cascading into request timeouts the
+     * browser reported as blanket CORS failures). The caller loops this in small batches instead.
      */
-    @Query("MATCH (c:Conflict) WHERE c.dateReported < $cutoff WITH c DETACH DELETE c RETURN count(c) AS deletedCount")
-    long deleteByDateReportedBefore(@Param("cutoff") LocalDate cutoff);
+    @Query("MATCH (c:Conflict) WHERE c.dateReported < $cutoff WITH c LIMIT $batchSize DETACH DELETE c RETURN count(c) AS deletedCount")
+    long deleteByDateReportedBefore(@Param("cutoff") LocalDate cutoff, @Param("batchSize") long batchSize);
 }
