@@ -41,4 +41,13 @@ EXPOSE 8080
 # invisible-to-the-JVM's-own-accounting memory is what was actually pushing the container over its
 # 512MB limit even while logged heap+non-heap sat around 320MB. Capping it forces an explicit,
 # visible OutOfMemoryError instead of a silent container-level kill if it's ever exceeded.
-ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-XX:MaxDirectMemorySize=48m", "-Xss512k", "-jar", "app.jar"]
+# Netty (used internally by the Neo4j driver for its TLS connections) allocates its own pooled
+# off-heap memory via sun.misc.Unsafe, NOT via java.nio's DirectByteBuffer - which means it is
+# completely invisible to BufferPoolMXBean and everything else the JVM exposes for monitoring.
+# Confirmed by logs: heap+non-heap+direct topped out around 220MB combined right up until Render's
+# own OOM kill at >512MB - a ~290MB gap accounted for by nothing the JVM can report on. Netty's
+# default pooled allocator sizes its arenas off detected CPU count (2x availableProcessors, 16MB
+# chunks each), which can massively overshoot on a container with a fractional (0.1) CPU quota.
+# Forcing the unpooled allocator and hard-capping Netty's own direct memory tracker removes that
+# entire invisible-memory blind spot.
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-XX:MaxDirectMemorySize=48m", "-Xss512k", "-Dio.netty.allocator.type=unpooled", "-Dio.netty.maxDirectMemory=33554432", "-jar", "app.jar"]
