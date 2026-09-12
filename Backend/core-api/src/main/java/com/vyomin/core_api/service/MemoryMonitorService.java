@@ -9,6 +9,8 @@ import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Render's free tier only exposes the Memory metrics graph on a paid plan, so this logs the
@@ -56,5 +58,20 @@ public class MemoryMonitorService {
                 nonHeapUsedMb, nonHeapCommittedMb,
                 directUsedMb, directCapacityMb,
                 Thread.activeCount());
+
+        log.info("Threads by group: {}", threadCountsByGroup());
+    }
+
+    // Thread.activeCount() alone showed a jump from ~22 to 50 right before a restart with no clue
+    // which threads multiplied. Groups by name with trailing digits/hex ids stripped (e.g.
+    // "nio-8080-exec-11" and "nio-8080-exec-3" both become "nio-8080-exec-N") so the next crash's
+    // logs point straight at the pool that's actually growing instead of requiring more guessing.
+    private Map<String, Integer> threadCountsByGroup() {
+        Map<String, Integer> counts = new TreeMap<>();
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            String name = t.getName().replaceAll("[-#][0-9a-fA-F]+$", "-N");
+            counts.merge(name, 1, Integer::sum);
+        }
+        return counts;
     }
 }
