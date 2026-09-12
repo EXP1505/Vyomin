@@ -50,12 +50,17 @@ gdelt:
     event:
       url: ${GDELT_CAMEO_EVENT_URL:https://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
   conflict:
-    # Lowered from 180: AuraDB free tier caps at 200,000 nodes total, and live ingestion adds
-    # nodes every 15 minutes indefinitely with no other ceiling - 180 days' worth (plus the
-    # historical backfill) is what actually pushed the graph past that cap. This also makes the
-    # very next prune run (see scheduledPruneOldConflicts's initialDelay fix) delete enough of
-    # the backlog to bring the graph back under the limit, not just slow future growth.
-    retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:60}
+    # AuraDB free tier caps at 200,000 nodes total. 60 days' retention still left the graph at
+    # 199,990/200,000 after a fresh prune - nowhere near enough headroom given live ingestion
+    # runs every 15 minutes forever. Lowered further for real breathing room.
+    retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:21}
+    # Live ingestion (isWhitelisted) previously had no severity gate at all - only "does either
+    # actor's country appear in the ~150-country whitelist", which is nearly every country, so
+    # ~70-75% of ALL global GDELT events passed every single cycle. This is what was actually
+    # filling the graph, independent of retention. Matches the backfill path's own threshold
+    # (min|goldstein| >= 5.0) so live ingestion only keeps events roughly as significant as what
+    # the historical backfill considered worth keeping.
+    min-severity-abs: ${GDELT_LIVE_MIN_SEVERITY_ABS:5.0}
 api:
   finnhub:
     key: ${FINNHUB_API_KEY:}

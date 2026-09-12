@@ -247,6 +247,13 @@ public class GdeltIngestionService {
     @Value("${gdelt.conflict.retention-days}")
     private int conflictRetentionDays;
 
+    // isWhitelisted() only checks "is either actor's country in the ~150-country whitelist",
+    // which is nearly every country - roughly 70-75% of ALL global GDELT events passed that
+    // alone. This is the actual severity gate, mirroring what the historical backfill already
+    // applies via its own min-severity-abs, which live ingestion never had.
+    @Value("${gdelt.conflict.min-severity-abs}")
+    private double liveMinSeverityAbs;
+
     private static final int SAVE_BATCH_SIZE = 250;
     // GDELT's own feed only updates every 15 minutes, so an on-demand fetch that lands within
     // this window of the last completed run has nothing new to find - skip re-downloading and
@@ -370,10 +377,13 @@ public class GdeltIngestionService {
                 if (!isWhitelisted(cols)) {
                     continue;
                 }
+                if (Math.abs(parseDoubleSafe(cols[COL_GOLDSTEIN], 0.0)) < liveMinSeverityAbs) {
+                    continue;
+                }
                 whitelisted.add(cols);
             }
             int filteredIn = whitelisted.size();
-            log.info("Filtered {} events from {} total (actor whitelist)", filteredIn, totalEvents);
+            log.info("Filtered {} events from {} total (actor whitelist + |goldstein|>={})", filteredIn, totalEvents, liveMinSeverityAbs);
 
             // Pass 2: one bulk existence check instead of a findByGdeltEventId() round trip per
             // row - the per-row version was the actual bottleneck even after batching saves,
