@@ -296,11 +296,16 @@ public class GdeltIngestionService {
     }
 
     // Runs once a day - conflict volume changes slowly enough that hourly pruning would just be
-    // wasted AuraDB round trips. Offset from scheduledIngest's initialDelay=0 so the two don't
-    // compete for the same connection pool slot on every app restart.
+    // wasted AuraDB round trips.
     private static final long PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000L;
 
-    @Scheduled(fixedRate = PRUNE_INTERVAL_MS, initialDelay = PRUNE_INTERVAL_MS)
+    // initialDelay was previously PRUNE_INTERVAL_MS (24h) - meaning a fresh boot never prunes
+    // until a full day later. On a host that restarts often (crash loops, redeploys) this job
+    // could go indefinitely without ever actually running once, while live ingestion keeps
+    // adding nodes every 15 minutes with nothing capping it - which is exactly how the graph
+    // silently grew past AuraDB free tier's 200k-node ceiling. 60s still avoids racing
+    // scheduledIngest's own initialDelay=0 for a connection pool slot on startup.
+    @Scheduled(fixedRate = PRUNE_INTERVAL_MS, initialDelay = 60_000)
     public void scheduledPruneOldConflicts() {
         pruneOldConflicts();
     }

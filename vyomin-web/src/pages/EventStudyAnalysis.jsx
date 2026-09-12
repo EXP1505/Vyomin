@@ -594,7 +594,7 @@ export default function EventStudyAnalysis() {
         setChartLoading(true);
         try {
           const cRes = await fetch(
-            `/api/analysis/price-history?ticker=${encodeURIComponent(chartSymbol)}&from=${form.dateFrom}&to=${form.dateTo}`
+            `${API_BASE}/api/analysis/price-history?ticker=${encodeURIComponent(chartSymbol)}&from=${form.dateFrom}&to=${form.dateTo}`
           );
           const cJson = await cRes.json();
           setChartCandles(Array.isArray(cJson) ? cJson : null);

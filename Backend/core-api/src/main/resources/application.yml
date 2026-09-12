@@ -50,7 +50,12 @@ gdelt:
     event:
       url: ${GDELT_CAMEO_EVENT_URL:https://data.gdeltproject.org/documentation/CAMEO.eventcodes.txt}
   conflict:
-    retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:180}
+    # Lowered from 180: AuraDB free tier caps at 200,000 nodes total, and live ingestion adds
+    # nodes every 15 minutes indefinitely with no other ceiling - 180 days' worth (plus the
+    # historical backfill) is what actually pushed the graph past that cap. This also makes the
+    # very next prune run (see scheduledPruneOldConflicts's initialDelay fix) delete enough of
+    # the backlog to bring the graph back under the limit, not just slow future growth.
+    retention-days: ${GDELT_CONFLICT_RETENTION_DAYS:60}
 api:
   finnhub:
     key: ${FINNHUB_API_KEY:}
