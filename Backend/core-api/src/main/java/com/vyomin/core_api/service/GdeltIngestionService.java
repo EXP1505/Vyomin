@@ -297,7 +297,15 @@ public class GdeltIngestionService {
     // ingestOpenNetworkData) so all three don't fire simultaneously on every app startup/restart -
     // that pile-up of concurrent Neo4j load is what exhausted the connection pool and made
     // interactive search requests time out waiting for a free connection.
-    @Scheduled(fixedRate = 900_000, initialDelay = 0)
+    //
+    // initialDelay was 0 - firing the CSV-download-parse-and-Neo4j-write burst the instant Spring
+    // finishes booting, right on top of the single heaviest memory moment in the process's life
+    // (loading the full context: Hibernate, the Neo4j driver, JPA, repository scanning). On a
+    // 512MB instance that stacked spike is a likely reason the container was observed dying within
+    // 1-3 minutes of almost every single boot with no exception logged (a container-level OOM-kill
+    // bypasses the JVM entirely, so nothing gets a chance to log it). 45s gives the JVM room to GC
+    // and settle from the boot spike before taking on another allocation-heavy task.
+    @Scheduled(fixedRate = 900_000, initialDelay = 45_000)
     public void scheduledIngest() {
         ingestLatestGdeltEvents();
     }
