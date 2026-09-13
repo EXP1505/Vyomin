@@ -605,6 +605,13 @@ export default function IntelligenceGraphExplorer() {
             {searchResponse ? `${searchResponse.totalMatches} matches` : '—'}
           </span>
         </div>
+        {/* GDELT's automated NLP pipeline sometimes reports the same real-world story as several
+            separate events (different articles/days/actor-label variants), and can occasionally
+            misattribute a source article to the wrong actor pair - both are upstream data-quality
+            limits of the feed, not something this app can fully de-duplicate or verify. */}
+        <div className="px-4 py-2 text-xs border-b" style={{ borderColor: 'var(--hairline)', color: 'var(--text-faint)' }}>
+          Live events are sourced from GDELT's automated global feed and may occasionally include duplicate or misattributed entries.
+        </div>
         <div className="flex-grow overflow-y-auto divide-y" style={{ borderColor: 'var(--hairline)' }}>
           {flatResults.length === 0 && (
             <div className="p-4 text-sm" style={{ color: 'var(--text-faint)' }}>No results yet</div>
