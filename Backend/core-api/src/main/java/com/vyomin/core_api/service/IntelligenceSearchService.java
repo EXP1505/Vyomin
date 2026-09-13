@@ -385,15 +385,16 @@ public class IntelligenceSearchService {
                 .toList();
     }
 
+    // Was conflictRepository.findAll().stream().filter(...) - loading every Conflict node in the
+    // whole database, fully hydrated with relationships, before filtering in the JVM. With tens
+    // of thousands of nodes that single round-trip was a massive, sudden allocation big enough to
+    // OOM the 512MB container within seconds - fast enough that the minute-by-minute memory
+    // logging never caught it building up, which is why every observed crash followed an
+    // interactive search with no warning beforehand. Now pushed into Cypher with a LIMIT.
     private List<Conflict> findConflictsByNameOrDescription(String query) {
         String lower = query.toLowerCase();
-        List<Conflict> allConflicts = conflictRepository.findAll();
-        if (allConflicts == null) return List.of();
-        return allConflicts.stream()
-                .filter(c -> c != null && (
-                        (c.getName() != null && c.getName().toLowerCase().contains(lower))
-                                || (c.getDescription() != null && c.getDescription().toLowerCase().contains(lower))))
-                .toList();
+        List<Conflict> matches = conflictRepository.findByNameOrDescriptionContainingIgnoreCase(lower);
+        return matches == null ? List.of() : matches;
     }
 
     private List<Investor> findInvestorsByName(String query) {

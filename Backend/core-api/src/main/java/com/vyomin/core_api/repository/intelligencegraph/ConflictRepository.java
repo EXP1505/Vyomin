@@ -58,4 +58,21 @@ public interface ConflictRepository extends Neo4jRepository<Conflict, Long> {
      */
     @Query("MATCH (c:Conflict) WHERE c.dateReported < $cutoff WITH c LIMIT $batchSize DETACH DELETE c RETURN count(c) AS deletedCount")
     long deleteByDateReportedBefore(@Param("cutoff") LocalDate cutoff, @Param("batchSize") long batchSize);
+
+    /**
+     * Backs the "conflict" search type's name/description lookup (e.g. searching "India"). Was
+     * previously done via conflictRepository.findAll().stream().filter(...) in
+     * IntelligenceSearchService - loading every Conflict node in the whole database, each fully
+     * hydrated with its INVOLVES relationships, into the JVM before filtering down to matches.
+     * With tens of thousands of Conflict nodes that single findAll() round-trip was a massive,
+     * sudden allocation - big enough to OOM the 512MB container in the few seconds it took to
+     * execute, well within a single gap of the minute-by-minute memory-usage logging, which is
+     * exactly why every observed crash followed an interactive search with no warning in the
+     * memory logs beforehand. Pushing the CONTAINS filter into Cypher and capping the result size
+     * mirrors the same fix already applied to findByInvolvedCountryNamesIgnoreCase above.
+     */
+    @Query("MATCH (c:Conflict) WHERE toLower(c.name) CONTAINS $lower OR toLower(c.description) CONTAINS $lower " +
+            "WITH c ORDER BY c.dateReported DESC LIMIT 50 " +
+            "OPTIONAL MATCH (c)-[rel:INVOLVES]->(co:Country) RETURN c, rel, co")
+    List<Conflict> findByNameOrDescriptionContainingIgnoreCase(@Param("lower") String lower);
 }
