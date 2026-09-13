@@ -52,9 +52,10 @@ function RecentEventsList({ events }) {
     <>
       {events.map((ev, i) => {
         // Same corroboration threshold as IntelligenceGraphExplorer.jsx: hide the link when GDELT
-        // only found one source for the event, since that's when its actor-pair extraction is
-        // most likely to have misattributed an unrelated article.
-        const hasReliableSource = ev.sourceUrl && (ev.numSources == null || ev.numSources >= 2);
+        // only found one source (or hasn't tagged a count yet - every node ingested before this
+        // field existed has numSources == null, so treating null as "show anyway" would have
+        // meant this filter never actually applied to current data).
+        const hasReliableSource = ev.sourceUrl && ev.numSources >= 2;
         const Row = hasReliableSource ? 'a' : 'div';
         const rowProps = hasReliableSource ? { href: ev.sourceUrl, target: '_blank', rel: 'noreferrer' } : {};
         return (

@@ -707,10 +707,11 @@ export default function IntelligenceGraphExplorer() {
                 than one outlet. GDELT's automated NLP extraction sometimes misattributes a source
                 article to the wrong actor pair - a single-source event is far more likely to be
                 one of those misfires, so we hide the link rather than risk sending someone to an
-                unrelated article. numSources == null (older data ingested before this field was
-                captured) is treated as unknown, not low-confidence, so existing links still show. */}
-            {selectedNode.raw?.sourceUrl &&
-              (selectedNode.raw?.numSources == null || selectedNode.raw.numSources >= 2) && (
+                unrelated article. numSources == null (older data ingested before this field
+                existed) is also treated as not-yet-verified and hidden - every existing Conflict
+                node has null here until GDELT ingestion (every 15 min) replaces it with tagged
+                data, so showing on "unknown" would have meant the filter never actually applied. */}
+            {selectedNode.raw?.sourceUrl && selectedNode.raw?.numSources >= 2 && (
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>Source Article</h4>
                 <a
