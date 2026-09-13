@@ -530,10 +530,16 @@ public class GdeltIngestionService {
 
         String actor1Name = resolveCountryName(actor1Code);
         String actor2Name = resolveCountryName(actor2Code);
+        // GDELT leaves both the actor code and name blank for plenty of real events (e.g. a
+        // purely domestic protest with no identified counterpart actor) - falling through to
+        // actor1Code in that case previously left the label as an empty string, producing
+        // nonsensical names like "Protest: - Germany" with the dash and no actor on one side.
         String actor1Label = actor1Name != null ? actor1Name
-                : (cols[COL_ACTOR1_NAME].isBlank() ? actor1Code : cols[COL_ACTOR1_NAME]);
+                : (!cols[COL_ACTOR1_NAME].isBlank() ? cols[COL_ACTOR1_NAME]
+                : (!actor1Code.isBlank() ? actor1Code : "Unknown"));
         String actor2Label = actor2Name != null ? actor2Name
-                : (cols[COL_ACTOR2_NAME].isBlank() ? actor2Code : cols[COL_ACTOR2_NAME]);
+                : (!cols[COL_ACTOR2_NAME].isBlank() ? cols[COL_ACTOR2_NAME]
+                : (!actor2Code.isBlank() ? actor2Code : "Unknown"));
         String actor1Type = resolveActorType(cols[COL_ACTOR1_TYPE1].trim());
         String actor2Type = resolveActorType(cols[COL_ACTOR2_TYPE1].trim());
 
@@ -564,11 +570,14 @@ public class GdeltIngestionService {
             involvedCountryNames.add(actor2Label);
         }
 
+        // regionName (where the event geographically took place) is kept as the plain
+        // primaryRegion field below, NOT added to involvedCountryNames/INVOLVES: a protest that
+        // merely occurred in Russia between two other countries' actors isn't Russia "being
+        // involved" in the way a country search implies. Conflating the two previously made a
+        // search for e.g. "Russia" return every event physically located there regardless of who
+        // the actors were, drowning out events where Russia was an actual party.
         String actionGeoCode = cols[COL_ACTIONGEO_COUNTRYCODE].trim();
         String regionName = FIPS_TO_WHITELIST_NAME.get(actionGeoCode);
-        if (regionName != null) {
-            involvedCountryNames.add(regionName);
-        }
 
         return new ParsedConflictEvent(
                 dedupeKey,
