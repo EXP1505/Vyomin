@@ -51,8 +51,12 @@ function RecentEventsList({ events }) {
   return (
     <>
       {events.map((ev, i) => {
-        const Row = ev.sourceUrl ? 'a' : 'div';
-        const rowProps = ev.sourceUrl ? { href: ev.sourceUrl, target: '_blank', rel: 'noreferrer' } : {};
+        // Same corroboration threshold as IntelligenceGraphExplorer.jsx: hide the link when GDELT
+        // only found one source for the event, since that's when its actor-pair extraction is
+        // most likely to have misattributed an unrelated article.
+        const hasReliableSource = ev.sourceUrl && (ev.numSources == null || ev.numSources >= 2);
+        const Row = hasReliableSource ? 'a' : 'div';
+        const rowProps = hasReliableSource ? { href: ev.sourceUrl, target: '_blank', rel: 'noreferrer' } : {};
         return (
           <Row
             key={i}

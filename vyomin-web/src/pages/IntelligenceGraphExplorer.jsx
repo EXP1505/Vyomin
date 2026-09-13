@@ -703,8 +703,14 @@ export default function IntelligenceGraphExplorer() {
               </dl>
             </div>
 
-            {/* Only rendered when GDELT actually supplied a source article for this event. */}
-            {selectedNode.raw?.sourceUrl && (
+            {/* Only rendered when GDELT supplied a source article AND it was corroborated by more
+                than one outlet. GDELT's automated NLP extraction sometimes misattributes a source
+                article to the wrong actor pair - a single-source event is far more likely to be
+                one of those misfires, so we hide the link rather than risk sending someone to an
+                unrelated article. numSources == null (older data ingested before this field was
+                captured) is treated as unknown, not low-confidence, so existing links still show. */}
+            {selectedNode.raw?.sourceUrl &&
+              (selectedNode.raw?.numSources == null || selectedNode.raw.numSources >= 2) && (
               <div>
                 <h4 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>Source Article</h4>
                 <a

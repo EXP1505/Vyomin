@@ -44,6 +44,15 @@ public class Conflict {
     /** GDELT's SOURCEURL column - the article this event was extracted from, when GDELT provides one. */
     private String sourceUrl;
 
+    /**
+     * GDELT's NumSources column: how many distinct news sources reported this event. GDELT's
+     * automated NLP extraction can misattribute a source article to the wrong actor pair,
+     * especially on single-source events - a corroborated-by-many event is far less likely to be
+     * one of those misfires. The frontend uses this to decide whether "Read source article" is
+     * worth showing at all.
+     */
+    private Integer numSources;
+
     @Relationship(type = "INVOLVES", direction = Relationship.Direction.OUTGOING)
     private Set<Country> involvedCountries = new HashSet<>();
 }

@@ -219,6 +219,7 @@ public class GdeltIngestionService {
     private static final int COL_EVENTCODE = 26;
     private static final int COL_EVENT_ROOTCODE = 28;
     private static final int COL_GOLDSTEIN = 30;
+    private static final int COL_NUMSOURCES = 32;
     private static final int COL_AVGTONE = 34;
     private static final int COL_ACTIONGEO_COUNTRYCODE = 53;
     private static final int COL_ACTIONGEO_LAT = 56;
@@ -553,6 +554,7 @@ public class GdeltIngestionService {
                 + (dateReported != null ? " on " + dateReported : "");
 
         String sourceUrl = cols[COL_SOURCEURL].trim();
+        Integer numSources = parseIntSafe(cols[COL_NUMSOURCES].trim());
 
         Set<String> involvedCountryNames = new java.util.LinkedHashSet<>();
         if (WHITELIST_CODE_TO_NAME.containsKey(actor1Code)) {
@@ -588,6 +590,7 @@ public class GdeltIngestionService {
                 actor2Type,
                 regionName,
                 sourceUrl.isBlank() ? null : sourceUrl,
+                numSources,
                 List.of(actor1Label, actor2Label, eventType),
                 involvedCountryNames
         );
@@ -615,6 +618,7 @@ public class GdeltIngestionService {
         conflict.setActor2CountryCode(event.actor2CountryCode());
         conflict.setActor2Type(event.actor2Type());
         conflict.setSourceUrl(event.sourceUrl());
+        conflict.setNumSources(event.numSources());
         conflict.setKeywords(new ArrayList<>(event.keywords()));
         conflict.setPrimaryRegion(event.primaryRegion());
 

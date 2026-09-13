@@ -35,6 +35,7 @@ public record ParsedConflictEvent(
         String actor2Type,
         String primaryRegion,
         String sourceUrl,
+        Integer numSources,
         List<String> keywords,
         Set<String> involvedCountryNames
 ) {
