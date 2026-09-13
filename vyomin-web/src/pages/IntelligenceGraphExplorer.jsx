@@ -451,6 +451,20 @@ export default function IntelligenceGraphExplorer() {
               ctx.fillStyle = node.color;
               ctx.fill();
 
+              // Conflict nodes with a corroborated (numSources >= 2) source article get a small
+              // cyan halo, distinct from the amber hub/selection rings, so a verified-source event
+              // reads visually different from one where "Read source article" is hidden because
+              // GDELT's extraction on a single-source article is more likely to have misattributed
+              // an unrelated story to this actor pair.
+              const hasVerifiedSource = node.type === 'conflict' && node.raw?.sourceUrl && node.raw?.numSources >= 2;
+              if (hasVerifiedSource) {
+                ctx.strokeStyle = '#4fd1c5';
+                ctx.lineWidth = 1.5 / globalScale;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius + 2.5, 0, 2 * Math.PI, false);
+                ctx.stroke();
+              }
+
               // Hub entities (the searched country/conflict itself) get a targeting-reticle ring
               // to read clearly as the center of the graph, matching the app's corner-bracket motif.
               if (isHub) {
