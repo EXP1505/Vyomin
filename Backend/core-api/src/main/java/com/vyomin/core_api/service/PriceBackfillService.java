@@ -41,6 +41,42 @@ public class PriceBackfillService {
     @Value("${stooq.backfill.ticker-delay-ms:1500}")
     private long tickerDelayMs;
 
+    /**
+     * On-demand counterpart to backfill(): fetches history for any of the given tickers that
+     * price_daily has zero rows for yet, so Event Study isn't limited to the fixed
+     * vyomin.analysis.tickers list - a user can type any Stooq-listed symbol and get a real
+     * analysis instead of "0 testable" from an empty table. Tickers already present are skipped
+     * entirely (no re-fetch, no staleness check) - existing data for the configured basket is
+     * kept fresh by the scheduled backfill job, this path only fills genuine gaps. Runs
+     * synchronously on the caller's request thread since a handful of Stooq fetches take a few
+     * seconds, not long enough to justify a background job + polling for a resume-project scale
+     * of traffic.
+     */
+    public void ensureTickersAvailable(List<String> requestedTickers) {
+        LocalDate end = LocalDate.now();
+        LocalDate start = end.minusYears(2);
+
+        List<String> missing = requestedTickers.stream()
+                .map(String::trim)
+                .filter(t -> !t.isEmpty())
+                .map(String::toUpperCase)
+                .distinct()
+                .filter(t -> !priceDailyRepository.existsByTicker(t))
+                .toList();
+
+        if (missing.isEmpty()) {
+            return;
+        }
+
+        log.info("On-demand price fetch for {} ticker(s) not yet in price_daily: {}", missing.size(), missing);
+        for (int i = 0; i < missing.size(); i++) {
+            backfillTicker(missing.get(i), start, end);
+            if (i < missing.size() - 1) {
+                sleepQuietly(tickerDelayMs);
+            }
+        }
+    }
+
     public Map<String, Object> backfill(LocalDate start, LocalDate end) {
         LocalDate effectiveEnd = end != null ? end : LocalDate.now();
         LocalDate effectiveStart = start != null ? start : effectiveEnd.minusYears(2);

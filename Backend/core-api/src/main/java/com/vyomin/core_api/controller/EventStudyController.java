@@ -9,6 +9,7 @@ import com.vyomin.core_api.dto.EventStudySweepDtos.EventStudySweepResponse;
 import com.vyomin.core_api.model.PriceDaily;
 import com.vyomin.core_api.repository.PriceDailyRepository;
 import com.vyomin.core_api.service.EventStudyService;
+import com.vyomin.core_api.service.PriceBackfillService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,16 +41,19 @@ public class EventStudyController {
 
     private final EventStudyService eventStudyService;
     private final PriceDailyRepository priceDailyRepository;
+    private final PriceBackfillService priceBackfillService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper redisObjectMapper;
 
     @PostMapping("/event-study")
     public ResponseEntity<EventStudyResponse> runEventStudy(@RequestBody EventStudyRequest request) {
+        priceBackfillService.ensureTickersAvailable(request.basket());
         return ResponseEntity.ok(eventStudyService.runEventStudy(request));
     }
 
     @PostMapping("/event-study-sweep")
     public ResponseEntity<EventStudySweepResponse> runEventStudySweep(@RequestBody EventStudySweepRequest request) {
+        priceBackfillService.ensureTickersAvailable(request.basket());
         return ResponseEntity.ok(eventStudyService.runSweep(request));
     }
 
@@ -57,6 +61,7 @@ public class EventStudyController {
     public ResponseEntity<List<PriceHistoryPoint>> priceHistory(@RequestParam String ticker,
                                                                   @RequestParam LocalDate from,
                                                                   @RequestParam LocalDate to) {
+        priceBackfillService.ensureTickersAvailable(List.of(ticker));
         List<PriceHistoryPoint> points = priceDailyRepository
                 .findByTickerAndTradeDateBetweenOrderByTradeDateAsc(ticker.toUpperCase(), from, to).stream()
                 .map(p -> new PriceHistoryPoint(p.getTradeDate(), p.getOpen(), p.getHigh(), p.getLow(), p.getClose(), p.getVolume()))
@@ -73,6 +78,7 @@ public class EventStudyController {
         List<String> basketList = (basket == null || basket.isBlank())
                 ? DEFAULT_BASKET
                 : Arrays.stream(basket.split(",")).map(String::trim).map(String::toUpperCase).filter(s -> !s.isEmpty()).toList();
+        priceBackfillService.ensureTickersAvailable(basketList);
 
         String cacheKey = DOSSIER_CACHE_PREFIX + countryCode + ":" + dateFrom + ":" + dateTo + ":" + String.join(",", basketList);
         // GenericJackson2JsonRedisSerializer round-trips a stored value as raw

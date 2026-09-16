@@ -15,6 +15,8 @@ public interface PriceDailyRepository extends JpaRepository<PriceDaily, PriceDai
 
     List<PriceDaily> findByTickerOrderByTradeDateAsc(String ticker);
 
+    boolean existsByTicker(String ticker);
+
     List<PriceDaily> findByTickerAndTradeDateBetweenOrderByTradeDateAsc(String ticker, LocalDate from, LocalDate to);
 
     // Native upsert instead of save() so re-running a backfill is a plain idempotent write
