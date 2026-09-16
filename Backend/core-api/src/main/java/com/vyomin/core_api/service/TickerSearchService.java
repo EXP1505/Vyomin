@@ -1,6 +1,7 @@
 package com.vyomin.core_api.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -50,11 +51,28 @@ public class TickerSearchService {
                 .toUriString();
 
         try {
-            JsonNode root = restClient.get().uri(uri).retrieve().body(JsonNode.class);
-            if (root == null) {
+            // Fetching as raw text first (not straight to JsonNode) so a non-JSON response -
+            // Yahoo returning an HTML challenge/block page instead of the expected body, which a
+            // direct JsonNode conversion would just silently fail to populate from - is visible
+            // in the logs instead of indistinguishable from a legitimately empty result.
+            String rawBody = restClient.get().uri(uri).retrieve().body(String.class);
+            if (rawBody == null || rawBody.isBlank()) {
+                log.warn("Ticker search for query='{}' got an empty response body", query);
                 return List.of();
             }
+
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root;
+            try {
+                root = mapper.readTree(rawBody);
+            } catch (Exception parseEx) {
+                log.warn("Ticker search for query='{}' returned non-JSON (likely a block/challenge page), first 200 chars: {}",
+                        query, rawBody.substring(0, Math.min(200, rawBody.length())));
+                return List.of();
+            }
+
             JsonNode quotes = root.path("quotes");
+            log.info("Ticker search for query='{}': {} raw quote(s) before filtering", query, quotes.size());
             List<TickerSearchResult> results = new ArrayList<>();
             for (JsonNode quote : quotes) {
                 String quoteType = quote.path("quoteType").asText("");
