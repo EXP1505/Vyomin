@@ -43,7 +43,7 @@ public class TickerSearchService {
             return List.of();
         }
 
-        String uri = UriComponentsBuilder.fromHttpUrl(SEARCH_URL)
+        String uri = UriComponentsBuilder.fromUriString(SEARCH_URL)
                 .queryParam("q", query.trim())
                 .queryParam("quotesCount", MAX_RESULTS)
                 .queryParam("newsCount", 0)
