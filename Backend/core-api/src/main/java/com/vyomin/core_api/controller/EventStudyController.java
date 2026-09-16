@@ -10,6 +10,8 @@ import com.vyomin.core_api.model.PriceDaily;
 import com.vyomin.core_api.repository.PriceDailyRepository;
 import com.vyomin.core_api.service.EventStudyService;
 import com.vyomin.core_api.service.PriceBackfillService;
+import com.vyomin.core_api.service.TickerSearchService;
+import com.vyomin.core_api.service.TickerSearchService.TickerSearchResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,8 +44,14 @@ public class EventStudyController {
     private final EventStudyService eventStudyService;
     private final PriceDailyRepository priceDailyRepository;
     private final PriceBackfillService priceBackfillService;
+    private final TickerSearchService tickerSearchService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper redisObjectMapper;
+
+    @GetMapping("/ticker-search")
+    public ResponseEntity<List<TickerSearchResult>> tickerSearch(@RequestParam String q) {
+        return ResponseEntity.ok(tickerSearchService.search(q));
+    }
 
     @PostMapping("/event-study")
     public ResponseEntity<EventStudyResponse> runEventStudy(@RequestBody EventStudyRequest request) {

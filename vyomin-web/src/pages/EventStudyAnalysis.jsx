@@ -106,6 +106,140 @@ function Field({ label, children }) {
   );
 }
 
+// Lets the basket be built by searching a company name instead of requiring the user already
+// know its ticker - backed by GET /api/analysis/ticker-search (Yahoo Finance's public search
+// under the hood). Keeps the underlying value as the same comma-separated string form.basket
+// always was, so nothing else in this file (basketList, the sweep form, etc.) needs to change.
+function TickerBasketPicker({ value, onChange }) {
+  const tickers = useMemo(() => value.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean), [value]);
+
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const debounceRef = useRef(null);
+  const latestQueryRef = useRef('');
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const q = query.trim();
+    if (!q) {
+      setSuggestions([]);
+      setSearchLoading(false);
+      return;
+    }
+    latestQueryRef.current = q;
+    setSearchLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/analysis/ticker-search?q=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        // A slower earlier request can resolve after a newer one - only apply the result that
+        // matches what's still actually in the input.
+        if (latestQueryRef.current === q) {
+          setSuggestions(Array.isArray(json) ? json : []);
+        }
+      } catch {
+        if (latestQueryRef.current === q) setSuggestions([]);
+      } finally {
+        if (latestQueryRef.current === q) setSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [query]);
+
+  const addTicker = (symbol) => {
+    const upper = symbol.trim().toUpperCase();
+    if (!upper) return;
+    if (!tickers.includes(upper)) {
+      onChange([...tickers, upper].join(','));
+    }
+    setQuery('');
+    setSuggestions([]);
+    setOpen(false);
+  };
+
+  const removeTicker = (symbol) => {
+    onChange(tickers.filter((t) => t !== symbol).join(','));
+  };
+
+  return (
+    <div className="relative flex flex-col gap-1.5">
+      {tickers.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {tickers.map((t) => (
+            <span
+              key={t}
+              className="font-mono-data text-xs flex items-center gap-1 px-2 py-0.5 border"
+              style={{ borderColor: 'var(--accent)', color: 'var(--accent)', background: 'var(--accent-soft)' }}
+            >
+              {t}
+              <button
+                type="button"
+                onClick={() => removeTicker(t)}
+                className="hover:opacity-70"
+                aria-label={`Remove ${t}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (suggestions.length > 0) {
+              addTicker(suggestions[0].symbol);
+            } else if (query.trim()) {
+              // Fallback for pasting/typing a raw ticker directly (or a comma-separated list)
+              // when the name search doesn't find it or hasn't returned yet.
+              query.split(',').forEach((raw) => raw.trim() && addTicker(raw));
+            }
+          }
+        }}
+        placeholder="Search a company name or type a ticker..."
+        className="font-mono-data border px-3 py-2 text-sm focus:outline-none"
+        style={inputStyle}
+      />
+      {open && (query.trim() || searchLoading) && (
+        <div
+          className="absolute left-0 top-full z-30 mt-1 w-full max-h-56 overflow-y-auto border text-sm"
+          style={{ background: 'var(--panel)', borderColor: 'var(--hairline)' }}
+        >
+          {searchLoading && (
+            <div className="px-3 py-2" style={{ color: 'var(--text-faint)' }}>Searching...</div>
+          )}
+          {!searchLoading && suggestions.length === 0 && query.trim() && (
+            <div className="px-3 py-2" style={{ color: 'var(--text-faint)' }}>
+              No matches - press Enter to add &quot;{query.trim().toUpperCase()}&quot; as a ticker directly.
+            </div>
+          )}
+          {!searchLoading && suggestions.map((s) => (
+            <button
+              type="button"
+              key={s.symbol}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addTicker(s.symbol)}
+              className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--panel-2)]"
+            >
+              <span className="truncate" style={{ color: 'var(--text)' }}>{s.name}</span>
+              <span className="font-mono-data text-xs flex-shrink-0" style={{ color: 'var(--text-faint)' }}>
+                {s.symbol}{s.exchange ? ` · ${s.exchange}` : ''}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Minimal combobox: displays/types a country NAME but tracks/submits an ISO alpha-3 CODE via
 // onChange. No existing combobox/autocomplete library in this codebase (checked package.json),
 // so this is hand-built - input + absolutely-positioned suggestion list, matching the existing
@@ -807,12 +941,10 @@ export default function EventStudyAnalysis() {
             />
           </Field>
 
-          <Field label="Basket (comma-separated tickers)">
-            <input
+          <Field label="Basket (search a company or type a ticker)">
+            <TickerBasketPicker
               value={form.basket}
-              onChange={(e) => setForm({ ...form, basket: e.target.value })}
-              className="font-mono-data border px-3 py-2 text-sm focus:outline-none"
-              style={inputStyle}
+              onChange={(basket) => setForm({ ...form, basket })}
             />
           </Field>
 
