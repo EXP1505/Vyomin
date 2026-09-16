@@ -123,7 +123,11 @@ function TickerBasketPicker({ value, onChange }) {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const q = query.trim();
-    if (!q) {
+    // Yahoo's search endpoint 429'd on every single keystroke during testing ("mi", "micr",
+    // "micro", ... each firing its own request within ~3s) - a 3-char floor plus a longer
+    // debounce cuts a 6-request burst for typing "microsoft" down to 1-2, which should stay
+    // under whatever rate limit is actually being hit rather than just guessing.
+    if (!q || q.length < 3) {
       setSuggestions([]);
       setSearchLoading(false);
       return;
@@ -144,7 +148,7 @@ function TickerBasketPicker({ value, onChange }) {
       } finally {
         if (latestQueryRef.current === q) setSearchLoading(false);
       }
-    }, 300);
+    }, 550);
     return () => clearTimeout(debounceRef.current);
   }, [query]);
 

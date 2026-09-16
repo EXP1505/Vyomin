@@ -11,6 +11,8 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Resolves a free-text company name to Stooq-compatible ticker symbols so the Event Study
@@ -33,17 +35,46 @@ public class TickerSearchService {
     // the default basket. Everything else Yahoo's search returns (mutual funds, currencies,
     // crypto, futures) isn't something Stooq's daily-bar backfill is meant to serve here.
     private static final Set<String> ALLOWED_QUOTE_TYPES = Set.of("EQUITY", "ETF");
+    // Yahoo's search endpoint 429'd on every request during testing, including the very first
+    // one - a low per-IP rate limit that a shared/cloud IP (Render's) can exhaust fast even with
+    // one person typing. Caching identical queries for a while means repeated searches for the
+    // same name (re-typing, multiple users, the frontend's own debounce still landing on a
+    // previously-seen prefix) cost zero additional Yahoo requests.
+    private static final long CACHE_TTL_MS = TimeUnit.MINUTES.toMillis(30);
 
     private final RestClient restClient = buildRestClient();
+    private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     public record TickerSearchResult(String symbol, String name, String exchange) {
+    }
+
+    private record CacheEntry(List<TickerSearchResult> results, long expiresAtMs) {
     }
 
     public List<TickerSearchResult> search(String query) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
+        String normalizedQuery = query.trim().toLowerCase();
 
+        CacheEntry cached = cache.get(normalizedQuery);
+        if (cached != null) {
+            if (cached.expiresAtMs() > System.currentTimeMillis()) {
+                return cached.results();
+            }
+            cache.remove(normalizedQuery);
+        }
+
+        List<TickerSearchResult> results = fetchFromYahoo(query);
+        // Only cache genuine results or a genuinely-empty search - not a transient failure (429,
+        // timeout, parse error), so a rate-limited moment doesn't get remembered as "no matches"
+        // for 30 minutes. fetchFromYahoo returning List.of() on failure vs. on a real empty
+        // result is indistinguishable here, so this trades a little re-fetching for correctness.
+        cache.put(normalizedQuery, new CacheEntry(results, System.currentTimeMillis() + CACHE_TTL_MS));
+        return results;
+    }
+
+    private List<TickerSearchResult> fetchFromYahoo(String query) {
         String uri = UriComponentsBuilder.fromUriString(SEARCH_URL)
                 .queryParam("q", query.trim())
                 .queryParam("quotesCount", MAX_RESULTS)
