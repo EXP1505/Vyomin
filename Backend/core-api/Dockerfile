@@ -31,7 +31,14 @@ EXPOSE 8080
 # SIGKILL'd by Render with no exception ever logged (looks like a random crash/restart, not an
 # app error). 65% leaves real headroom for everything outside the heap.
 # MaxMetaspaceSize: without a cap, metaspace can grow unbounded as classes load - bound it so it
-# can't be the thing that pushes total memory over the container limit.
+# can't be the thing that pushes total memory over the container limit. Originally capped at 128m,
+# which was fine when this was set but got outgrown as the app gained more code paths (the ticker
+# search/on-demand-price-fetch/event-study-bootstrap machinery) - the first request to exercise
+# several brand-new classes all at once threw a genuine OutOfMemoryError: Metaspace, confirmed by
+# logs showing non-heap pinned at the 128m-ish ceiling while heap (82MB used) and direct (0MB)
+# both had plenty of room to spare - so raised to 200m, with MaxRAMPercentage correspondingly
+# trimmed down to keep the combined worst-case ceiling from creeping toward the container's
+# 512MB limit, even though real-world heap usage has stayed well under its own ceiling for weeks.
 # Xss: default per-thread stack is 1MB; with Tomcat's thread pool plus scheduler/driver threads,
 # smaller stacks measurably reduce native memory reserved just for thread stacks.
 # MaxDirectMemorySize: without an explicit cap this defaults to the max heap size, meaning NIO
@@ -50,4 +57,4 @@ EXPOSE 8080
 # chunks each), which can massively overshoot on a container with a fractional (0.1) CPU quota.
 # Forcing the unpooled allocator and hard-capping Netty's own direct memory tracker removes that
 # entire invisible-memory blind spot.
-ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=65.0", "-XX:MaxMetaspaceSize=128m", "-XX:MaxDirectMemorySize=48m", "-Xss512k", "-Dio.netty.allocator.type=unpooled", "-Dio.netty.maxDirectMemory=33554432", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Djava.net.preferIPv4Stack=true", "-XX:MaxRAMPercentage=55.0", "-XX:MaxMetaspaceSize=200m", "-XX:MaxDirectMemorySize=48m", "-Xss512k", "-Dio.netty.allocator.type=unpooled", "-Dio.netty.maxDirectMemory=33554432", "-jar", "app.jar"]
