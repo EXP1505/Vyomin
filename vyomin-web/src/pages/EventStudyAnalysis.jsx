@@ -5,7 +5,7 @@ import { CandlestickSvgChart } from '../components/StockDetailModal';
 import { COUNTRIES, COUNTRY_CODE_TO_NAME } from '../data/countries';
 import {
   significanceStyle, directionBadge, toneChipStyle, classifyPValue, PVALUE_CLASSIFICATIONS,
-  Modal, DivergingBar, DonutRing, PValueBar, CoverageBar, WindowCard, ExplainModalContent,
+  Modal, DivergingBar, DonutRing, PValueBar, CoverageBar, WindowCard, ExplainModalContent, formatPValue,
 } from '../components/analysis/windowSummary';
 import { API_BASE } from '../lib/api';
 
@@ -221,7 +221,8 @@ function TickerBasketPicker({ value, onChange }) {
           )}
           {!searchLoading && suggestions.length === 0 && query.trim() && (
             <div className="px-3 py-2" style={{ color: 'var(--text-faint)' }}>
-              No matches - press Enter to add &quot;{query.trim().toUpperCase()}&quot; as a ticker directly.
+              No matches right now (name search is a free external lookup and can occasionally be
+              rate-limited, not necessarily a real "no results") - press Enter to add &quot;{query.trim().toUpperCase()}&quot; as a ticker directly.
             </div>
           )}
           {!searchLoading && suggestions.map((s) => (
@@ -963,6 +964,9 @@ export default function EventStudyAnalysis() {
             </button>
             <span className="text-xs" style={{ color: 'var(--text-faint)' }}>Windows fixed at +1 / +3 / +5 trading days</span>
           </div>
+          <div className="col-span-2 md:col-span-3 text-xs" style={{ color: 'var(--text-faint)' }}>
+            First analysis of a ticker outside the usual defense/energy basket takes a few extra seconds — its price history gets fetched once and cached, not re-fetched on later runs.
+          </div>
         </form>
       </Panel>
 
@@ -1135,7 +1139,7 @@ export default function EventStudyAnalysis() {
               {sortedSweepResults.map((r, i) => {
                 const bestWindowSummary = r.summary.find((w) => w.windowDays === r.bestWindow);
                 const survives = r.survivesCorrection;
-                const pText = typeof r.bestPValue === 'number' ? r.bestPValue.toFixed(4) : '—';
+                const pText = formatPValue(r.bestPValue);
                 // Only ever computed for survivors - see directionBadge's own comment for why.
                 const direction = survives ? directionBadge(bestWindowSummary?.meanReturn) : null;
                 // Three discrete tiers by rank, not a continuous gradient: rank 1 is a "hero" card,

@@ -12,6 +12,19 @@ export function formatPercent(n, digits = 3) {
   return `${sign}${(n * 100).toFixed(digits)}%`;
 }
 
+// The backend's bootstrap p-value is a Monte Carlo estimate over 10,000 random draws (see
+// EventStudyService.BOOTSTRAP_ITERATIONS) - it cannot resolve anything finer than 1/10000, so a
+// literal "0.0000" implies more precision than the method can actually deliver (and can render
+// AS "0.0000" on one run and "0.0002" on a re-run of the exact same query, since it reseeds
+// randomly each time - both are correct estimates of the same true, very small p-value, just with
+// ordinary Monte Carlo sampling noise at the tail). Showing "< 0.0001" instead is honest about
+// that resolution floor and stops a re-run's noise from reading as inconsistent output.
+export function formatPValue(p) {
+  if (typeof p !== 'number' || Number.isNaN(p)) return '—';
+  if (p < 0.0001) return '< 0.0001';
+  return p.toFixed(4);
+}
+
 export function significanceStyle(pass) {
   return pass
     ? { color: 'var(--positive)', borderColor: 'var(--positive)', background: 'rgba(53,214,184,0.1)' }
@@ -402,7 +415,7 @@ export function ExplainModalContent({ w }) {
           {w.bootstrapStatus === 'OK' && typeof w.bootstrapPValue === 'number' ? (
             <>
               <div className="font-mono-data text-3xl font-bold mt-1" style={{ color: w.bootstrapPValue < 0.05 ? 'var(--positive)' : 'var(--text)' }}>
-                {w.bootstrapPValue.toFixed(4)}
+                {formatPValue(w.bootstrapPValue)}
               </div>
               <div className="mt-2">
                 <span className="inline-block px-2.5 py-1 border text-xs" style={toneChipStyle(classifyPValue(w.bootstrapPValue).tone)}>
@@ -412,6 +425,9 @@ export function ExplainModalContent({ w }) {
               <PValueBar pValue={w.bootstrapPValue} />
               <div className="text-sm mt-2" style={{ color: 'var(--text-faint)' }}>
                 Green zone (0–0.05) = significant. Marker is green if the real p-value falls inside it.
+              </div>
+              <div className="text-xs mt-2" style={{ color: 'var(--text-faint)' }}>
+                This is a randomized (Monte Carlo) estimate, not a fixed lookup — re-running the same query can shift it slightly (e.g. 0.0031 vs 0.0028). That's expected sampling noise, not inconsistent output.
               </div>
             </>
           ) : (
@@ -495,7 +511,7 @@ export function WindowCard({ w, query }) {
         <div>
           <div className="text-xs" style={{ color: 'var(--text-faint)' }}>Bootstrap p-value</div>
           <div className="font-mono-data" style={{ color: badge.showPValue ? 'var(--text)' : 'var(--text-faint)' }}>
-            {badge.showPValue ? w.bootstrapPValue.toFixed(4) : '—'}
+            {badge.showPValue ? formatPValue(w.bootstrapPValue) : '—'}
           </div>
         </div>
         <div>
