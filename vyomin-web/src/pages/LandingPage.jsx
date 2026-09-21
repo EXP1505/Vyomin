@@ -57,7 +57,7 @@ export function LandingPage() {
   if (isAuthenticated) return null;
 
   return (
-    <div className="relative flex min-h-screen flex-col text-[var(--text)] overflow-hidden">
+    <div className="relative flex min-h-screen flex-col text-[var(--text)]">
       <Background />
 
       <div className="relative z-10 flex flex-grow flex-col">
