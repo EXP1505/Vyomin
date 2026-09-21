@@ -57,7 +57,10 @@ export function LandingPage() {
   if (isAuthenticated) return null;
 
   return (
-    <div className="relative flex min-h-screen flex-col text-[var(--text)]">
+    // body has overflow:hidden globally (the authenticated app is a fixed-viewport layout that
+    // manages its own internal scroll areas) - this page must be its own scroll container rather
+    // than relying on the body to scroll, since it's taller than one viewport with 4 feature cards.
+    <div className="relative flex h-screen flex-col overflow-y-auto text-[var(--text)]">
       <Background />
 
       <div className="relative z-10 flex flex-grow flex-col">
